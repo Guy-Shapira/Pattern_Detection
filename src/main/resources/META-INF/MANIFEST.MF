@@ -1,0 +1,8 @@
+Manifest-Version: 1.0
+Main-Class: Main
+Class-Path: esper-common-8.4.0.jar slf4j-api-1.7.28.jar json-simple-1.1.
+ 1.jar janino-3.1.0.jar log4j-1.2.17.jar commons-compiler-3.1.0.jar espe
+ r-runtime-8.4.0.jar esper-common-8.4.0.jar slf4j-api-1.7.28.jar commons
+ -csv-1.8.jar esper-compiler-8.4.0.jar antlr4-runtime-4.7.2.jar hamcrest
+ -core-1.1.jar junit-4.10.jar
+

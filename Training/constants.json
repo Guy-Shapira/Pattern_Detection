@@ -1,0 +1,13 @@
+{
+  "train_stream_path": "Data/train_data_stream.txt",
+  "test_stream_path": "Data/test_data_stream.txt",
+  "train_log_file": "Training/training_data/train_log_file.txt",
+  "train_matches": "Data/train_matches.txt",
+  "test_matches": "Data/test_matches.txt",
+  "test_size": "1000",
+  "train_size": "1000",
+  "pattern_window_size": "4",
+  "window_size": "4",
+  "match_size": "1",
+  "event_types": ["C, D, E, F"]
+}

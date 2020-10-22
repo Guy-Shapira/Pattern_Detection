@@ -1,0 +1,5 @@
+select *
+from Event#length(10) as a1
+where
+a1.type = 'C'
+done
