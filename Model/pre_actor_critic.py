@@ -26,7 +26,7 @@ with torch.autograd.set_detect_anomaly(True):
             self.embedding_count = nn.Embedding(max_count, 3)
             self.data = self._create_data(data_path)
             self.data = self.data.view(len(self.data), -1)
-            self.hidden_size = 1024
+            self.hidden_size = 2048
             self.value_options = 4
             self.num_actions = self.value_options * self.num_events + 1
             # first self.num_events are just select events
@@ -34,9 +34,8 @@ with torch.autograd.set_detect_anomaly(True):
             # then every follow self.num events is select or select with value compare to previous action (for now only direct previous)
             self.linear1_action = nn.Linear(self.window_size * 9, self.hidden_size)
             self.linear2_action = nn.Linear(self.hidden_size, self.num_actions)
-            self.critic = nn.Linear(self.hidden_size, 1)
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
-            # needs to be smarter if follow is not possible
+            # needs to be smarter if follow is not possiable
             self._create_training_dir(data_path)
             self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
 
@@ -61,8 +60,10 @@ with torch.autograd.set_detect_anomaly(True):
             for i in range(0, len(data) - self.window_size):
                 if sliding_window_data is None:
                     sliding_window_data = data[i: i + self.window_size]
+                    # sliding_window_data = torch.cat((sliding_window_data, fake_data), dim=0)
                     sliding_window_data = sliding_window_data.unsqueeze(0)
                 else:
+                    # to_add = torch.cat((data[i: i + self.window_size], fake_data), dim=0).unsqueeze(0)
                     to_add = data[i: i + self.window_size].unsqueeze(0)
                     sliding_window_data = torch.cat((sliding_window_data, to_add))
             return sliding_window_data
@@ -88,45 +89,44 @@ with torch.autograd.set_detect_anomaly(True):
                 exps = torch.exp(masked_vec-max_vec)
                 masked_exps = exps * mask.float()
                 masked_sums = masked_exps.sum(dim, keepdim=True)
-                zeros = (masked_sums == 0)
+                zeros=(masked_sums == 0)
                 masked_sums += zeros.float()
                 return masked_exps/masked_sums
-
             x = F.relu(self.linear1_action(input))
-
-            value = self.critic(x)
             x = self.linear2_action(x)
             x = masked_softmax(x, mask.clone(), dim=0, T=T)
-
-            return x, value
+            return x
 
         def get_action(self, input, mask, T=1):
-            probs, value = self.forward(Variable(input), mask, T=T)
-            numpy_probs = probs.detach().numpy()
-            highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(numpy_probs))
+            probs = self.forward(Variable(input), mask, T=T)
+            highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(probs.detach().numpy()))
             log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
-            entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs))
-            return highest_prob_action, log_prob, value, entropy
+            return highest_prob_action, log_prob
 
 
-    def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term):
-        Qvals = np.zeros_like(values)
-        for t in reversed(range(len(rewards))):
-            Qval = rewards[t] + GAMMA * Qval
-            Qvals[t] = Qval
+    def update_policy(policy_network, rewards, log_probs):
+        discounted_rewards = []
 
-        values = torch.FloatTensor(values)
-        Qvals = torch.FloatTensor(Qvals)
-        log_probs = torch.stack(log_probs)
+        for t in range(len(rewards)):
+            Gt = 0
+            pw = 0
+            for r in rewards[t:]:
+                Gt = Gt + GAMMA ** pw * r
+                pw = pw + 1
+            discounted_rewards.append(Gt)
 
-        advantage = Qvals - values
-        actor_loss = (-log_probs * advantage).mean()
-        critic_loss = 0.5 * advantage.pow(2).mean()
-        policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
+        discounted_rewards = torch.tensor(discounted_rewards)
+        discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (discounted_rewards.std(unbiased=False) + 1e-9) # normalize discounted rewards
 
-        policy_network.zero_grad()
+        policy_gradient = []
+        for log_prob, Gt in zip(log_probs, discounted_rewards):
+            policy_gradient.append(-log_prob * Gt)
+
+        policy_network.optimizer.zero_grad()
+        policy_gradient = torch.stack(policy_gradient).sum()
         policy_gradient.backward()
         policy_network.optimizer.step()
+
 
     def train(model, num_epochs=1):
         all_rewards = []
@@ -148,17 +148,12 @@ with torch.autograd.set_detect_anomaly(True):
                     rewards = []
                     log_probs = []
                     action_types = []
-                    values = []
-                    entropy_term = 0
                     mask = torch.tensor([1.0] * model.num_actions)
                     while not is_done:
-                        action, log_prob, value, entropy = model.get_action(data, mask.detach(), T=temper)
                         count += 1
-                        value = value.detach().numpy()[0]
-                        entropy_term += entropy
-                        if action == model.num_actions - 1:
+                        action, log_prob = model.get_action(data, mask.detach(), T=temper)
+                        if action == model.num_events - 1:
                             mask[-1] = mask[-1].clone() * 1.1 # to match the "step/state" - apply some change to how we work on the state over time
-                            values.append(value)
                             if len(actions) == 0:
                                 log_probs.append(log_prob)
                                 rewards.append(-1.1)
@@ -170,10 +165,9 @@ with torch.autograd.set_detect_anomaly(True):
                         else:
                             mask[action] = mask[action].clone() * 0.8 # to match the "step/state" - apply some change to how we work on the state over time
                             mask[-1] = mask[-1].clone() * 1.3 # to match the "step/state" - apply some change to how we work on the state over time
-                            action, kind_of_action = mapping(model.num_events, action)
+                            action, action_type = mapping(model.num_events, action)
                             actions.append(action)
-                            values.append(value)
-                            action_types.append(kind_of_action)
+                            action_types.append(action_type)
                             log_probs.append(log_prob)
                             prepare_pattern(actions, action_types, i)
                             prepare_loss_clac(i, model.window_size, len(actions))
@@ -191,12 +185,12 @@ with torch.autograd.set_detect_anomaly(True):
                         if count >= model.match_max_size:
                             is_done = True
 
-                    Qval, _ = model.forward(data, mask.detach(), T=temper)
-                    Qval = Qval.detach().numpy()[0]
-                    update_policy(model, rewards, log_probs, values, Qval, entropy_term)
+                    update_policy(model, rewards, log_probs)
                     all_rewards.append(np.sum(rewards))
                     numsteps.append(len(actions))
+                    # print(np.array(rewards))
                     avg_numsteps.append(np.mean(numsteps))
+                    # all_rewards.append(np.sum(rewards))
                     mean_rewards.append(np.mean(all_rewards))
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
                 plt.plot(all_rewards)
@@ -204,6 +198,8 @@ with torch.autograd.set_detect_anomaly(True):
                 plt.plot(avg_numsteps)
                 plt.xlabel('Episode')
                 plt.show()
+
+
 
 
     class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=6)
