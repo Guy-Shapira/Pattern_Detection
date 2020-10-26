@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import os
-from utils import prepare_loss_clac, prepare_pattern, to_var, mapping
+from Model.utils import prepare_loss_clac, prepare_pattern, to_var, mapping, OpenCEP_pattern
 import tqdm
 import sys
 import time
@@ -162,10 +162,11 @@ with torch.autograd.set_detect_anomaly(True):
                             values.append(value)
                             action_types.append(kind_of_action)
                             log_probs.append(log_prob)
-                            prepare_pattern(actions, action_types, i)
-                            prepare_loss_clac(i, model.window_size, len(actions))
-                            cmd = '"C:/Users/User/.jdks/jdk-11/bin/java.exe" -jar out/artifacts/rule_mining_jar/rule_mining.jar >/nul 2>&1'
-                            os.system(cmd)
+                            OpenCEP_pattern(actions, action_types, i)
+                            # prepare_pattern(actions, action_types, i)
+                            # prepare_loss_clac(i, model.window_size, len(actions))
+                            # cmd = '"C:/Users/User/.jdks/jdk-11/bin/java.exe" -jar out/artifacts/rule_mining_jar/rule_mining.jar >/nul 2>&1'
+                            # os.system(cmd)
                             with open("Data/{}.txt".format(i), "r") as f:
                                 reward = int(f.read())
                                 real_rewards.append(reward)

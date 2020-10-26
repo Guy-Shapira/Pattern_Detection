@@ -1,6 +1,82 @@
 import torch
 from torch.autograd import Variable
 import numpy as np
+import os
+import pathlib
+import sys
+from CEP import CEP
+from evaluation.EvaluationMechanismFactory import TreeBasedEvaluationMechanismParameters
+from stream.Stream import OutputStream
+from stream.FileStream import FileInputStream, FileOutputStream
+from misc.Utils import generate_matches
+from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
+from plan.TreeCostModels import TreeCostModels
+from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
+from plugin.ToyExample.Toy import DataFormatter
+from tree.PatternMatchStorage import TreeStorageParameters
+from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, EqFormula, IdentifierTerm, \
+    AtomicTerm, AndFormula, TrueFormula
+from base.PatternStructure import AndOperator, SeqOperator, PrimitiveEventStructure, NegationOperator
+from base.Pattern import Pattern
+from datetime import timedelta
+
+currentPath = pathlib.Path(os.path.dirname(__file__))
+absolutePath = str(currentPath.parent)
+sys.path.append(absolutePath)
+
+INCLUDE_BENCHMARKS = False
+DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = \
+    TreeBasedEvaluationMechanismParameters(TreePlanBuilderParameters(TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
+                                                                     TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL),
+                                           TreeStorageParameters(sort_storage=False,
+                                                                 clean_up_interval=10,
+                                                                 prioritize_sorting_by_timestamp=True))
+DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
+
+
+def get_next_formula(bindings, action_type):
+    if action_type == "nop":
+        return TrueFormula()
+    elif action_type == "<":
+        return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+    elif action_type == ">":
+        return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+    else:
+        return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                   IdentifierTerm(bindings[1], lambda x: x["Value"]))
+
+
+def build_formula(bindings, action_types):
+    num_ops_remainings = len(np.where(np.array(action_types) != 'nop')[0])
+    if num_ops_remainings == 0 or len(bindings) == 1:
+        return TrueFormula()
+    elif num_ops_remainings == 1 or len(bindings):
+        return get_next_formula(action_types[0], bindings)
+    else:
+        if action_types[0] == "nop":
+            return build_formula(bindings[1:], action_types[1:])
+        else:
+            return AndFormula(get_next_formula(bindings, action_types[0]), build_formula(bindings[1:], action_types[1:]))
+
+def OpenCEP_pattern(actions, action_types, index):
+    bindings = [chr(ord("a") + i) for i in range(len(actions))]
+    action_types = np.array(action_types)
+    pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)])
+                      ,build_formula(bindings, action_types)
+                      ,timedelta(seconds=2))
+    run_OpenCEP(str(index), [pattern])
+
+
+def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+    cep = CEP(patterns, eval_mechanism_params)
+    events = os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name))
+    base_matches_directory = os.path.join(absolutePath, 'Model', 'Training')
+    output_file_name = "%sMatches.txt" % test_name
+    matches_stream = FileOutputStream(base_matches_directory, output_file_name)
+    running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
+    return running_time
 
 def to_var(x):
     if torch.cuda.is_available():
