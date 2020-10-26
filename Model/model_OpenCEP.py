@@ -11,14 +11,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from shutil import copyfile
 import datetime
-date_time_str = '2020-10-26 13:40:00.243860'
-date_time_obj = datetime.datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S.%f')
 
 GAMMA = 0.99
 with torch.autograd.set_detect_anomaly(True):
 
     class ruleMiningClass(nn.Module):
-        def __init__(self, data_path, num_events, match_max_size=9, max_values=3000, window_size=20, max_count=3000):
+        def __init__(self, data_path, num_events, match_max_size=9, max_values=5000, window_size=30, max_count=5000):
             super().__init__()
             self.num_events = num_events
             self.match_max_size = match_max_size
@@ -39,9 +37,10 @@ with torch.autograd.set_detect_anomaly(True):
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.005)
 
         def _create_data(self, data_path):
+            date_time_obj = None
             data = None
             with open(data_path) as f:
                 for line in f:
@@ -51,6 +50,8 @@ with torch.autograd.set_detect_anomaly(True):
                     value = self.embedding_values(torch.tensor(int(value)))
                     count = count[:-1]
                     count = datetime.datetime.strptime(count, '%Y-%m-%d %H:%M:%S.%f')
+                    if date_time_obj == None:
+                        date_time_obj = count
                     count -= date_time_obj
                     count = count.total_seconds()
                     count = self.embedding_count(torch.tensor(int(count)))
@@ -121,21 +122,22 @@ with torch.autograd.set_detect_anomaly(True):
         policy_gradient.backward()
         policy_network.optimizer.step()
 
-    def train(model, num_epochs=1):
+    def train(model, num_epochs=5):
         all_rewards = []
         numsteps = []
         avg_numsteps = []
         temper = 1
         mean_rewards = []
+        real, mean_real = [], []
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
-            with tqdm.tqdm(total=len(os.listdir("Model/training")[:100]), file=pbar_file) as pbar:
-                for i, data in enumerate(model.data[:100]):
+            with tqdm.tqdm(total=len(os.listdir("Model/training")[:250]), file=pbar_file) as pbar:
+                for i, data in enumerate(model.data[:250]):
                     data_size = len(data)
                     old_desicions = torch.tensor([0] * model.match_max_size)
                     data = torch.cat((data, old_desicions.float()), dim=0)
-                    if i % 10 == 0:
-                        temper *= 1.25
+                    if i % 50 == 0:
+                        temper *= 1.05
                     count = 0
                     best_reward = 0.0
                     pbar.update(n=1)
@@ -172,9 +174,9 @@ with torch.autograd.set_detect_anomaly(True):
                                     is_done = True
                                     rewards.append(-1.5)
                                     break
-                                reward *= 1.5
-                                reward += len(actions)
-                                # reward += len(np.where(np.array(action_types) != 'nop')[0])
+                                reward *= 1.25
+                                reward += len(actions) * 0.5
+                                reward += len(np.where(np.array(action_types) != 'nop')[0]) * 2
                                 rewards.append(reward)
                             if reward > best_reward:
                                 best_reward = reward
@@ -190,10 +192,12 @@ with torch.autograd.set_detect_anomaly(True):
                     numsteps.append(len(actions))
                     avg_numsteps.append(np.mean(numsteps))
                     mean_rewards.append(np.mean(all_rewards))
+                    real.append(np.sum(real_rewards))
+                    mean_real.append(np.mean(real_rewards))
                     sys.stdout.write("Real reward : {}\n".format(np.max(real_rewards)))
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
-                plt.plot(all_rewards)
-                plt.plot(mean_rewards, 'g')
+                plt.plot(mean_real)
+                # plt.plot(mean_rewards, 'g')
                 plt.xlabel('Episode')
                 plt.show()
 

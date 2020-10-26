@@ -72,6 +72,22 @@ def OpenCEP_pattern(actions, action_types, index):
     run_OpenCEP(str(index), [pattern])
 
 
+def single_diffrent_events(curr, rest_bindings):
+    if len(rest_bindings) == 0:
+        return TrueFormula()
+    else:
+        return AndFormula(GreaterThanFormula(IdentifierTerm(curr, lambda x: x["Count"]),
+                                           IdentifierTerm(rest_bindings[0], lambda x: x["Count"])),
+                          single_diffrent_events(curr, rest_bindings[1:]))
+
+def all_diffrent_events(bindings):
+    if len(bindings) == 1:
+        return TrueFormula()
+    else:
+        return AndFormula(single_diffrent_events(bindings[0], bindings[1:]), all_diffrent_events(bindings[1:]))
+
+
+
 def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     cep = CEP(patterns, eval_mechanism_params)
     events = FileInputStream(os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name)))

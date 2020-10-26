@@ -25,7 +25,7 @@ def build_data_stream():
             counter += datetime.timedelta(seconds=1)
             if i % 3 == 0:
                 name = str(random.choice(constants['event_types']))
-                value = str(random.randint(0, 1000))
+                value = str(random.randint(max(0, i - 10), min(i + 10, 5000)))
                 s_counter = str(counter)
                 event = ','.join([name, value, s_counter]) + "\n"
                 file.write(event)
