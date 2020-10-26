@@ -18,7 +18,7 @@ GAMMA = 0.99
 with torch.autograd.set_detect_anomaly(True):
 
     class ruleMiningClass(nn.Module):
-        def __init__(self, data_path, num_events, match_max_size=8, max_values=3000, window_size=20, max_count=3000):
+        def __init__(self, data_path, num_events, match_max_size=9, max_values=3000, window_size=20, max_count=3000):
             super().__init__()
             self.num_events = num_events
             self.match_max_size = match_max_size
@@ -32,16 +32,14 @@ with torch.autograd.set_detect_anomaly(True):
             self.hidden_size = 2048
             self.value_options = 4
             self.num_actions = self.value_options * self.num_events + 1
-            # first self.num_events are just select events
-            # last is nop action version
-            # then every follow self.num events is select or select with value compare to previous action (for now only direct previous)
-            self.linear1_action = nn.Linear(self.window_size * 9, self.hidden_size)
+            self.embedding_desicions = nn.Embedding(self.num_actions, 1)
+            self.linear1_action = nn.Linear((self.window_size + 1) * 9, self.hidden_size)
             self.linear2_action = nn.Linear(self.hidden_size, self.num_actions)
             self.critic = nn.Linear(self.hidden_size, 1)
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.005)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
 
         def _create_data(self, data_path):
             data = None
@@ -131,8 +129,11 @@ with torch.autograd.set_detect_anomaly(True):
         mean_rewards = []
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
-            with tqdm.tqdm(total=len(os.listdir("Model/training")), file=pbar_file) as pbar:
-                for i, data in enumerate(model.data):
+            with tqdm.tqdm(total=len(os.listdir("Model/training")[:100]), file=pbar_file) as pbar:
+                for i, data in enumerate(model.data[:100]):
+                    data_size = len(data)
+                    old_desicions = torch.tensor([0] * model.match_max_size)
+                    data = torch.cat((data, old_desicions.float()), dim=0)
                     if i % 10 == 0:
                         temper *= 1.25
                     count = 0
@@ -142,8 +143,9 @@ with torch.autograd.set_detect_anomaly(True):
                     actions, rewards, log_probs, action_types, values, real_rewards = [], [], [] ,[], [], []
                     entropy_term = 0
                     while not is_done:
-                        data = model.data[i + count]
                         action, log_prob, value, entropy = model.get_action(data, T=temper)
+                        data = data.clone()
+                        data[data_size + count] = model.embedding_desicions(torch.tensor(action))
                         count += 1
                         value = value.detach().numpy()[0]
                         entropy_term += entropy
@@ -152,12 +154,10 @@ with torch.autograd.set_detect_anomaly(True):
                             if len(actions) == 0:
                                 log_probs.append(log_prob)
                                 rewards.append(-1.1)
-                                # break
                             else:
                                 log_probs.append(log_prob)
                                 rewards.append(rewards[-1])
                                 break
-
                         else:
                             action, kind_of_action = mapping(model.num_events, action)
                             actions.append(action)
@@ -172,13 +172,13 @@ with torch.autograd.set_detect_anomaly(True):
                                     is_done = True
                                     rewards.append(-1.5)
                                     break
-                                reward *= 1.25
-                                reward += len(actions) * 0.1
-                                reward += len(np.where(np.array(action_types) != 'nop')[0]) * 1.5
+                                reward *= 1.5
+                                reward += len(actions)
+                                # reward += len(np.where(np.array(action_types) != 'nop')[0])
                                 rewards.append(reward)
                             if reward > best_reward:
                                 best_reward = reward
-                                copyfile("pattern", "best_pattern/best_pattern{}".format(i))
+                                copyfile("Data/Matches/{}Matches.txt".format(i), "best_pattern/best_pattern{}".format(i))
                             os.remove("Data/Matches/{}Matches.txt".format(i))
                         if count >= model.match_max_size:
                             is_done = True

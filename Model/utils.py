@@ -68,7 +68,7 @@ def OpenCEP_pattern(actions, action_types, index):
     action_types = np.array(action_types)
     pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
                       build_formula(bindings, action_types),
-                      timedelta(seconds=2))
+                      timedelta(seconds=10))
     run_OpenCEP(str(index), [pattern])
 
 
