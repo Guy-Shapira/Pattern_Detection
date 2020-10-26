@@ -2,12 +2,13 @@ from constants import constants
 import random
 import pandas as pd
 import shutil
+import datetime
 
 def build_data_stream():
     for size, path in zip([constants['train_size'], constants['test_size']],
                           [constants['train_stream_path'], constants['test_stream_path']]):
         file = open(path, "w")
-        counter = 0
+        counter = datetime.datetime.now()
         for i in range(size):
             # name = str(random.choice(constants['event_types']))
             name = "A"
@@ -15,20 +16,20 @@ def build_data_stream():
             s_counter = str(counter)
             event = ','.join([name, value, s_counter]) + "\n"
             file.write(event)
-            counter += 1
+            counter += datetime.timedelta(seconds=1)
             name = "B"
             value = str(i)
             s_counter = str(counter)
             event = ','.join([name, value, s_counter]) + "\n"
             file.write(event)
-            counter += 1
+            counter += datetime.timedelta(seconds=1)
             if i % 3 == 0:
                 name = str(random.choice(constants['event_types']))
                 value = str(random.randint(0, 1000))
                 s_counter = str(counter)
                 event = ','.join([name, value, s_counter]) + "\n"
                 file.write(event)
-                counter += 1
+                counter += datetime.timedelta(seconds=1)
         file.close()
 
 

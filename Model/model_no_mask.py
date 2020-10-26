@@ -10,6 +10,9 @@ from torch.autograd import Variable
 import numpy as np
 import matplotlib.pyplot as plt
 from shutil import copyfile
+import datetime
+date_time_str = '2020-10-26 13:40:00.243860'
+date_time_obj = datetime.datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S.%f')
 
 GAMMA = 0.99
 with torch.autograd.set_detect_anomaly(True):
@@ -48,6 +51,10 @@ with torch.autograd.set_detect_anomaly(True):
                     event = ord(event) - ord("A")
                     event = self.embedding_events(torch.tensor(event))
                     value = self.embedding_values(torch.tensor(int(value)))
+                    count = count[:-1]
+                    count = datetime.datetime.strptime(count, '%Y-%m-%d %H:%M:%S.%f')
+                    count -= date_time_obj
+                    count = count.total_seconds()
                     count = self.embedding_count(torch.tensor(int(count)))
                     if data is None:
                         data = torch.cat((event, value, count), 0)
@@ -163,12 +170,8 @@ with torch.autograd.set_detect_anomaly(True):
                             action_types.append(kind_of_action)
                             log_probs.append(log_prob)
                             OpenCEP_pattern(actions, action_types, i)
-                            # prepare_pattern(actions, action_types, i)
-                            # prepare_loss_clac(i, model.window_size, len(actions))
-                            # cmd = '"C:/Users/User/.jdks/jdk-11/bin/java.exe" -jar out/artifacts/rule_mining_jar/rule_mining.jar >/nul 2>&1'
-                            # os.system(cmd)
-                            with open("Data/{}.txt".format(i), "r") as f:
-                                reward = int(f.read())
+                            with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
+                                reward = int(f.read().count("\n"))
                                 real_rewards.append(reward)
                                 if reward == 0:
                                     is_done = True
@@ -181,7 +184,7 @@ with torch.autograd.set_detect_anomaly(True):
                             if reward > best_reward:
                                 best_reward = reward
                                 copyfile("pattern", "best_pattern/best_pattern{}".format(i))
-
+                            os.remove("Data/Matches/{}Matches.txt".format(i))
                         if count >= model.match_max_size:
                             is_done = True
 
@@ -196,7 +199,6 @@ with torch.autograd.set_detect_anomaly(True):
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
                 plt.plot(all_rewards)
                 plt.plot(mean_rewards, 'g')
-                # plt.plot(avg_numsteps)
                 plt.xlabel('Episode')
                 plt.show()
 

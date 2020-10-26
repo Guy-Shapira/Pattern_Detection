@@ -10,7 +10,7 @@ COLUMN_KEYS = [
 
 TICKER_KEY = "Type"
 EVENT_TIMESTAMP_KEY = "Count"
-fmt = '%b %d %Y %I:%M%p'
+fmt = '%Y-%m-%d %H:%M:%S.%f'
 
 
 class ByTickerEventTypeClassifier(EventTypeClassifier):

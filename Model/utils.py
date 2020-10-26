@@ -52,8 +52,8 @@ def build_formula(bindings, action_types):
     num_ops_remainings = len(np.where(np.array(action_types) != 'nop')[0])
     if num_ops_remainings == 0 or len(bindings) == 1:
         return TrueFormula()
-    elif num_ops_remainings == 1 or len(bindings):
-        return get_next_formula(action_types[0], bindings)
+    elif num_ops_remainings == 1:
+        return get_next_formula(bindings, action_types[0])
     else:
         if action_types[0] == "nop":
             return build_formula(bindings[1:], action_types[1:])
@@ -71,8 +71,8 @@ def OpenCEP_pattern(actions, action_types, index):
 
 def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     cep = CEP(patterns, eval_mechanism_params)
-    events = os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name))
-    base_matches_directory = os.path.join(absolutePath, 'Model', 'Training')
+    events = FileInputStream(os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name)))
+    base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
