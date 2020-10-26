@@ -41,7 +41,7 @@ with torch.autograd.set_detect_anomaly(True):
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.05)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.005)
 
         def _create_data(self, data_path):
             data = None
@@ -131,21 +131,16 @@ with torch.autograd.set_detect_anomaly(True):
         mean_rewards = []
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
-            with tqdm.tqdm(total=len(os.listdir("Model/training")[:50]), file=pbar_file) as pbar:
-                for i, data in enumerate(model.data[:50]):
+            with tqdm.tqdm(total=len(os.listdir("Model/training")), file=pbar_file) as pbar:
+                for i, data in enumerate(model.data):
                     if i % 10 == 0:
                         temper *= 1.25
                     count = 0
                     best_reward = 0.0
                     pbar.update(n=1)
                     is_done = False
-                    actions = []
-                    rewards = []
-                    log_probs = []
-                    action_types = []
-                    values = []
+                    actions, rewards, log_probs, action_types, values, real_rewards = [], [], [] ,[], [], []
                     entropy_term = 0
-                    real_rewards = []
                     while not is_done:
                         data = model.data[i + count]
                         action, log_prob, value, entropy = model.get_action(data, T=temper)
@@ -171,7 +166,7 @@ with torch.autograd.set_detect_anomaly(True):
                             log_probs.append(log_prob)
                             OpenCEP_pattern(actions, action_types, i)
                             with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
-                                reward = int(f.read().count("\n"))
+                                reward = int(f.read().count("\n") / (len(actions) + 1))
                                 real_rewards.append(reward)
                                 if reward == 0:
                                     is_done = True

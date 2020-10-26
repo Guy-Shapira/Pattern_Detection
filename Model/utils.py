@@ -53,7 +53,10 @@ def build_formula(bindings, action_types):
     if num_ops_remainings == 0 or len(bindings) == 1:
         return TrueFormula()
     elif num_ops_remainings == 1:
-        return get_next_formula(bindings, action_types[0])
+        if action_types[0] == "nop":
+            return build_formula(bindings[1:], action_types[1:])
+        else:
+            return get_next_formula(bindings, action_types[0])
     else:
         if action_types[0] == "nop":
             return build_formula(bindings[1:], action_types[1:])
@@ -63,9 +66,9 @@ def build_formula(bindings, action_types):
 def OpenCEP_pattern(actions, action_types, index):
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
-    pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)])
-                      ,build_formula(bindings, action_types)
-                      ,timedelta(seconds=2))
+    pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
+                      build_formula(bindings, action_types),
+                      timedelta(seconds=2))
     run_OpenCEP(str(index), [pattern])
 
 
