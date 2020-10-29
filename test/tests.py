@@ -1,6 +1,6 @@
 from plan.TreePlanBuilderFactory import IterativeImprovementTreePlanBuilderParameters
 from test.KC_tests import *
-
+from test.MultiPattern_tests import *
 from evaluation.EvaluationMechanismFactory import TreeBasedEvaluationMechanismParameters
 from misc.ConsumptionPolicy import *
 from plan.LeftDeepTreeBuilders import *
@@ -15,15 +15,7 @@ try:
     from UnitTests.test_storage import run_storage_tests
 except ImportError:
     from test.UnitTests.test_storage import run_storage_tests
-
-
-def guyTest(createTestFile = False):
-    pattern = Pattern(
-        SeqOperator([PrimitiveEventStructure("AAPL", "a")]),
-        GreaterThanFormula(IdentifierTerm("a", lambda x: x["Opening Price"]), AtomicTerm(1)),
-        timedelta(minutes=120)
-    )
-    runTest("one", [pattern], createTestFile)
+    
 
 def oneArgumentsearchTest(createTestFile = False):
     pattern = Pattern(
@@ -210,30 +202,18 @@ def hierarchyPatternSearchTest(createTestFile=False):
     runTest('hierarchy', [hierarchyPattern], createTestFile)
 
 
-def multiplePatternSearchTest(createTestFile=False):
-    amazonInstablePattern = Pattern(
-        SeqOperator([PrimitiveEventStructure("AMZN", "x1"), PrimitiveEventStructure("AMZN", "x2"), PrimitiveEventStructure("AMZN", "x3")]),
-        AndFormula(
-            SmallerThanEqFormula(IdentifierTerm("x1", lambda x: x["Lowest Price"]), AtomicTerm(75)),
-            AndFormula(
-                GreaterThanEqFormula(IdentifierTerm("x2", lambda x: x["Peak Price"]), AtomicTerm(78)),
-                SmallerThanEqFormula(IdentifierTerm("x3", lambda x: x["Lowest Price"]),
-                                     IdentifierTerm("x1", lambda x: x["Lowest Price"]))
-            )
-        ),
-        timedelta(days=1)
+def duplicateEventTypeTest(createTestFile=False):
+    """
+    PATTERN SEQ(AmazonStockPriceUpdate a, AmazonStockPriceUpdate b, AmazonStockPriceUpdate c)
+    WHERE   TRUE
+    WITHIN 10 minutes
+    """
+    pattern = Pattern(
+        SeqOperator([PrimitiveEventStructure("AMZN", "a"), PrimitiveEventStructure("AMZN", "b"), PrimitiveEventStructure("AMZN", "c")]),
+        TrueFormula(),
+        timedelta(minutes=10)
     )
-    googleAscendPattern = Pattern(
-        SeqOperator([PrimitiveEventStructure("GOOG", "a"), PrimitiveEventStructure("GOOG", "b"), PrimitiveEventStructure("GOOG", "c")]),
-        AndFormula(
-            SmallerThanFormula(IdentifierTerm("a", lambda x: x["Peak Price"]),
-                               IdentifierTerm("b", lambda x: x["Peak Price"])),
-            SmallerThanFormula(IdentifierTerm("b", lambda x: x["Peak Price"]),
-                               IdentifierTerm("c", lambda x: x["Peak Price"]))
-        ),
-        timedelta(minutes=3)
-    )
-    runTest('multiplePatterns', [amazonInstablePattern, googleAscendPattern], createTestFile)
+    runTest("duplicateEventType", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
 
 
 def nonFrequencyPatternSearchTest(createTestFile=False):
@@ -802,6 +782,7 @@ def testWithMultipleNotAtBeginningMiddleEnd(createTestFile=False):
     )
     runTest("NotEverywhere", [pattern], createTestFile)
 
+
 def singleType1PolicyPatternSearchTest(createTestFile = False):
     """
     PATTERN SEQ(AppleStockPriceUpdate a, AmazonStockPriceUpdate b, AvidStockPriceUpdate c)
@@ -815,6 +796,7 @@ def singleType1PolicyPatternSearchTest(createTestFile = False):
         ConsumptionPolicy(single="AMZN", secondary_selection_strategy=SelectionStrategies.MATCH_NEXT)
     )
     runTest("singleType1Policy", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
+
 
 def singleType2PolicyPatternSearchTest(createTestFile = False):
     """
@@ -845,6 +827,7 @@ def contiguousPolicyPatternSearchTest(createTestFile = False):
     )
     runTest("contiguousPolicySingleList", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
 
+
 def contiguousPolicy2PatternSearchTest(createTestFile = False):
     """
     PATTERN SEQ(AppleStockPriceUpdate a, AmazonStockPriceUpdate b, AvidStockPriceUpdate c)
@@ -858,6 +841,7 @@ def contiguousPolicy2PatternSearchTest(createTestFile = False):
         ConsumptionPolicy(contiguous=[["a", "b"], ["b", "c"]])
     )
     runTest("contiguousPolicyMultipleLists", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
+
 
 def freezePolicyPatternSearchTest(createTestFile = False):
     """
@@ -873,6 +857,7 @@ def freezePolicyPatternSearchTest(createTestFile = False):
     )
     runTest("freezePolicy", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
 
+
 def freezePolicy2PatternSearchTest(createTestFile = False):
     """
     PATTERN SEQ(AppleStockPriceUpdate a, AmazonStockPriceUpdate b, AvidStockPriceUpdate c)
@@ -886,6 +871,7 @@ def freezePolicy2PatternSearchTest(createTestFile = False):
         ConsumptionPolicy(freeze="b")
     )
     runTest("freezePolicy2", [pattern], createTestFile, eventStream=nasdaqEventStreamTiny)
+
 
 def sortedStorageTest(createTestFile=False):
     pattern = Pattern(
@@ -905,6 +891,7 @@ def sortedStorageTest(createTestFile=False):
         DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS.tree_plan_params, storage_params
     )
     runTest("sortedStorageTest", [pattern], createTestFile, eval_mechanism_params=eval_params, events=nasdaqEventStream)
+
 
 def sortedStorageBenchMarkTest(createTestFile=False):
     pattern = Pattern(
@@ -935,10 +922,6 @@ def sortedStorageBenchMarkTest(createTestFile=False):
 
 runTest.over_all_time = 0
 
-
-guyTest()
-exit()
-
 # basic functionality tests
 oneArgumentsearchTest()
 simplePatternSearchTest()
@@ -952,6 +935,7 @@ nonsensePatternSearchTest()
 hierarchyPatternSearchTest()
 nonFrequencyPatternSearchTest()
 arrivalRatesPatternSearchTest()
+duplicateEventTypeTest()
 
 # tree plan generation algorithms
 frequencyPatternSearchTest()
@@ -1013,6 +997,21 @@ freezePolicy2PatternSearchTest()
 # storage tests
 sortedStorageTest()
 run_storage_tests()
+
+# multi-pattern tests
+# first approach: sharing leaves
+leafIsRoot()
+distinctPatterns()
+threePatternsTest()
+samePatternDifferentTimeStamps()
+rootAndInner()
+
+# second approach: sharing equivalent subtrees
+onePatternIncludesOther()
+samePatternSharingRoot()
+severalPatternShareSubtree()
+notInTheBeginningShare()
+multipleParentsForInternalNode()
 
 # benchmarks
 if INCLUDE_BENCHMARKS:
