@@ -9,5 +9,5 @@
   "pattern_window_size": "4",
   "window_size": "5",
   "match_size": "1",
-  "event_types": ["C, D, E"]
+  "event_types": ["A", "B", "C", "D, E", "F"]
 }

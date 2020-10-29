@@ -15,7 +15,7 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 from plugin.ToyExample.Toy import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, EqFormula, IdentifierTerm, \
-    AtomicTerm, AndFormula, TrueFormula
+    AtomicTerm, AndFormula, TrueFormula, NotEqFormula
 from base.PatternStructure import AndOperator, SeqOperator, PrimitiveEventStructure, NegationOperator
 from base.Pattern import Pattern
 from datetime import timedelta
@@ -43,10 +43,18 @@ def get_next_formula(bindings, action_type):
     elif action_type == ">":
         return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
                                IdentifierTerm(bindings[1], lambda x: x["Value"]))
-    else:
+    elif action_type == "=":
         return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
                                    IdentifierTerm(bindings[1], lambda x: x["Value"]))
-
+    elif action_type == "not <":
+        return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+    elif action_type == "not >":
+        return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+    else: #action_type == "not ="
+        return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                         IdentifierTerm(bindings[1], lambda x: x["Value"]))
 
 def build_formula(bindings, action_types):
     num_ops_remainings = len(np.where(np.array(action_types) != 'nop')[0])
@@ -68,7 +76,7 @@ def OpenCEP_pattern(actions, action_types, index):
     action_types = np.array(action_types)
     pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
                       build_formula(bindings, action_types),
-                      timedelta(seconds=10))
+                      timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
 
 
@@ -179,16 +187,39 @@ def get_event_type(event):
 
 
 def mapping(num_events, value):
-    help_map = {i: chr(ord("A") + i) for i in range(num_events)}
-    if value < num_events:
-        kind_of_action = "nop"
-    elif value < 2 * num_events:
-        kind_of_action = "<"
-    elif value < 3 * num_events:
-        kind_of_action = ">"
+    # adding "not" support
+    # TODO: change model.value_option in a way that this mapping wont be hardcoded!
+    if value >= num_events * 4:
+        value, kind_of_action = mapping(num_events, value - num_events * 4)
+        if kind_of_action != "nop":
+            kind_of_action = "not " + kind_of_action
     else:
-        kind_of_action = "="
-    value %= num_events
-    return help_map.get(value), kind_of_action
+        help_map = {i: chr(ord("A") + i) for i in range(num_events)}
+        if value < num_events:
+            kind_of_action = "nop"
+        elif value < 2 * num_events:
+            kind_of_action = "<"
+        elif value < 3 * num_events:
+            kind_of_action = ">"
+        else:
+            kind_of_action = "="
+        value %= num_events
+        value = help_map.get(value)
+    return value, kind_of_action
 
 
+def pattern_complexity(actions, action_types, max_events, max_ops):
+    num_events = len(actions)
+    num_ops = len(np.where(np.array(action_types) != 'nop')[0])
+    num_unique_events = len(np.unique(actions))
+    num_unique_events_ops = len(np.unique(action_types))
+    if num_events == 1:
+        return 0.85
+    if num_ops == 0:
+        return 0.5
+    if  num_unique_events == 1:
+        if num_unique_events_ops == 1:
+            return 0.1
+        return 0.25
+
+    return (num_unique_events_ops / max_ops)  * 1.5 + (num_unique_events / max_events) * 2

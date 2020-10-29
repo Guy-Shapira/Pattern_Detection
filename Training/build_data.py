@@ -10,22 +10,19 @@ def build_data_stream():
         file = open(path, "w")
         counter = datetime.datetime.now()
         for i in range(size):
-            # name = str(random.choice(constants['event_types']))
-            name = "A"
-            value = str(i)
-            s_counter = str(counter)
-            event = ','.join([name, value, s_counter]) + "\n"
-            file.write(event)
-            counter += datetime.timedelta(seconds=1)
-            name = "B"
-            value = str(i)
-            s_counter = str(counter)
-            event = ','.join([name, value, s_counter]) + "\n"
-            file.write(event)
-            counter += datetime.timedelta(seconds=1)
-            if i % 3 == 0:
+            rand_val = random.randint(0, 5)
+            if rand_val < 3:
+                name = "A"
+                value = str(i)
+                for _ in range(3):
+                    s_counter = str(counter)
+                    event = ','.join([name, value, s_counter]) + "\n"
+                    file.write(event)
+                    counter += datetime.timedelta(seconds=1)
+                    name = chr(ord(name) + 1)
+            else:
                 name = str(random.choice(constants['event_types']))
-                value = str(random.randint(max(0, i - 10), min(i + 10, 5000)))
+                value = str(i)
                 s_counter = str(counter)
                 event = ','.join([name, value, s_counter]) + "\n"
                 file.write(event)
