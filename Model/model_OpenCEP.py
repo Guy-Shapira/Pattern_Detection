@@ -37,7 +37,7 @@ with torch.autograd.set_detect_anomaly(True):
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.005)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.00005)
 
         def _create_data(self, data_path):
             date_time_obj = None
