@@ -28,7 +28,7 @@ with torch.autograd.set_detect_anomaly(True):
             self.data = self._create_data(data_path)
             self.data = self.data.view(len(self.data), -1)
             self.hidden_size = 2048
-            self.value_options = 4 * 2 #not support
+            self.value_options = 4 * 2 * 2 #not support and value support
             self.num_actions = self.value_options * self.num_events + 1
             self.embedding_desicions = nn.Embedding(self.num_actions, 1)
             self.linear1_action = nn.Linear((self.window_size + 1) * 9, self.hidden_size)
@@ -36,6 +36,8 @@ with torch.autograd.set_detect_anomaly(True):
             self.critic = nn.Linear(self.hidden_size, 1)
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
+
+            self.value_layer = nn.Linear(self.hidden_size, self.max_values)
             self._create_training_dir(data_path)
             self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
 
@@ -121,6 +123,15 @@ with torch.autograd.set_detect_anomaly(True):
             entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs))
             return highest_prob_action, log_prob, value, entropy
 
+        def get_value(self, input):
+            x = F.relu(self.linear1_action(Variable(input)))
+            x = self.value_layer(x)
+            probs = F.softmax(x, dim=0)
+            numpy_probs = probs.detach().numpy()
+            highest_prob_action = np.random.choice(self.max_values, p=np.squeeze(numpy_probs))
+            log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
+            return highest_prob_action, log_prob
+
 
     def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term):
         Qvals = np.zeros_like(values)
@@ -162,6 +173,7 @@ with torch.autograd.set_detect_anomaly(True):
                     pbar.update(n=1)
                     is_done = False
                     actions, rewards, log_probs, action_types, values, real_rewards = [], [], [] ,[], [], []
+                    comp_values = []
                     entropy_term = 0
                     mask = torch.tensor([1.0] * model.num_actions)
                     while not is_done:
@@ -186,11 +198,18 @@ with torch.autograd.set_detect_anomaly(True):
                             mask[action] = mask[action].clone() * 0.8
                             # mask[-1] = mask[-1].clone() * 1.3
                             action, kind_of_action = mapping(model.num_events, action)
+                            if len(kind_of_action.split("value")) > 1:
+                                comp_value, log_prob_2 = model.get_value(data)
+                                kind_of_action = kind_of_action.replace("value", "")
+                                log_prob += log_prob_2 #This might be really bad
+                                comp_values.append(comp_value)
+                            else:
+                                comp_values.append("none")
                             actions.append(action)
                             values.append(value)
                             action_types.append(kind_of_action)
                             log_probs.append(log_prob)
-                            OpenCEP_pattern(actions, action_types, i)
+                            OpenCEP_pattern(actions, action_types, i, comp_values)
                             with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
                                 reward = int(f.read().count("\n") / (len(actions) + 1))
                                 real_rewards.append(reward)
@@ -198,7 +217,7 @@ with torch.autograd.set_detect_anomaly(True):
                                     is_done = True
                                     rewards.append(-1.5)
                                     break
-                                reward *= pattern_complexity(actions, action_types, model.num_events, model.value_options)
+                                reward *= pattern_complexity(actions, action_types, comp_values, model.num_events, model.value_options)
                                 rewards.append(reward)
                             if reward > best_reward:
                                 best_reward = reward
@@ -216,7 +235,7 @@ with torch.autograd.set_detect_anomaly(True):
                     mean_rewards.append(np.mean(all_rewards))
                     real.append(np.sum(real_rewards))
                     mean_real.append(np.mean(real_rewards))
-                    sys.stdout.write("Real reward : {}\n".format(np.max(real_rewards)))
+                    sys.stdout.write("Real reward : {}, compersions : {}\n".format(np.max(real_rewards), len(np.where(np.array(comp_values) != 'none')[0])))
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
                 # plt.plot(mean_real)
                 plt.plot(mean_rewards, 'g')

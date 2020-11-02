@@ -34,9 +34,30 @@ DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = \
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
-def get_next_formula(bindings, action_type):
+def get_next_formula(bindings, action_type, value):
     if action_type == "nop":
         return TrueFormula()
+    elif len(action_type.split("v")) == 2:
+        action_type = action_type.split("v")[1]
+        if action_type.startswith("<"):
+            return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                          AtomicTerm(value))
+        elif action_type.startswith(">"):
+            return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                      AtomicTerm(value))
+        elif action_type.startswith("="):
+            return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                             AtomicTerm(value))
+        elif action_type.startswith("not <"):
+            return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                        AtomicTerm(value))
+        elif action_type.startswith("not >"):
+            return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                        AtomicTerm(value))
+        else:  # action_type == "not ="
+            return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+                                AtomicTerm(value))
+
     elif action_type == "<":
         return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
                                IdentifierTerm(bindings[1], lambda x: x["Value"]))
@@ -56,26 +77,30 @@ def get_next_formula(bindings, action_type):
         return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
                          IdentifierTerm(bindings[1], lambda x: x["Value"]))
 
-def build_formula(bindings, action_types):
-    num_ops_remainings = len(np.where(np.array(action_types) != 'nop')[0])
-    if num_ops_remainings == 0 or len(bindings) == 1:
+def build_formula(bindings, action_types, comp_values):
+    num_ops_remaining = len(np.where(np.array(action_types) != 'nop')[0])
+    num_comps_remaining = len(np.where(np.array(comp_values) != 'none')[0])
+    if num_ops_remaining == 0:
         return TrueFormula()
-    elif num_ops_remainings == 1:
+    if len(bindings) == 1 and num_comps_remaining == 0:
+        return TrueFormula()
+    elif num_ops_remaining == 1:
         if action_types[0] == "nop":
-            return build_formula(bindings[1:], action_types[1:])
+            return build_formula(bindings[1:], action_types[1:], comp_values[1:])
         else:
-            return get_next_formula(bindings, action_types[0])
+            return get_next_formula(bindings, action_types[0], comp_values[0])
     else:
         if action_types[0] == "nop":
-            return build_formula(bindings[1:], action_types[1:])
+            return build_formula(bindings[1:], action_types[1:], comp_values[1:])
         else:
-            return AndFormula(get_next_formula(bindings, action_types[0]), build_formula(bindings[1:], action_types[1:]))
+            return AndFormula(get_next_formula(bindings, action_types[0], comp_values[0]),
+                              build_formula(bindings[1:], action_types[1:], comp_values[1:]))
 
-def OpenCEP_pattern(actions, action_types, index):
+def OpenCEP_pattern(actions, action_types, index, comp_values):
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
-                      build_formula(bindings, action_types),
+                      build_formula(bindings, action_types, comp_values),
                       timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
 
@@ -187,9 +212,13 @@ def get_event_type(event):
 
 
 def mapping(num_events, value):
-    # adding "not" support
+    # adding "not" support and value support, this value support must!!!! be changed
     # TODO: change model.value_option in a way that this mapping wont be hardcoded!
-    if value >= num_events * 4:
+    if value >= num_events * 8:
+        value, kind_of_action = mapping(num_events, value - num_events * 8)
+        if kind_of_action != "nop":
+            kind_of_action = "v" + kind_of_action + " value"
+    elif value >= num_events * 4:
         value, kind_of_action = mapping(num_events, value - num_events * 4)
         if kind_of_action != "nop":
             kind_of_action = "not " + kind_of_action
@@ -208,9 +237,10 @@ def mapping(num_events, value):
     return value, kind_of_action
 
 
-def pattern_complexity(actions, action_types, max_events, max_ops):
+def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
     num_events = len(actions)
     num_ops = len(np.where(np.array(action_types) != 'nop')[0])
+    num_cops = len(np.where(np.array(action_types) != 'none')[0])
     num_unique_events = len(np.unique(actions))
     num_unique_events_ops = len(np.unique(action_types))
     if num_events == 1:
@@ -222,4 +252,4 @@ def pattern_complexity(actions, action_types, max_events, max_ops):
             return 0.1
         return 0.25
 
-    return (num_unique_events_ops / max_ops)  * 1.5 + (num_unique_events / max_events) * 2
+    return (num_unique_events_ops / max_ops)  * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
