@@ -35,6 +35,13 @@ DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
 def get_next_formula(bindings, action_type, value):
+    """
+    Creates a single condition in the formula of the pattern
+    :param bindings: All bindings (events as symbols) remining
+    :param action_type: current action type (comparison with next, comparison with value, ect.)
+    :param value: current the values to compare with
+    :return: the next part of the formula
+    """
     if action_type == "nop":
         return TrueFormula()
     elif len(action_type.split("v")) == 2:
@@ -78,6 +85,13 @@ def get_next_formula(bindings, action_type, value):
                          IdentifierTerm(bindings[1], lambda x: x["Value"]))
 
 def build_formula(bindings, action_types, comp_values):
+    """
+    Build the condition formula of the pattern
+    :param bindings: All bindings (events as symbols)
+    :param action_types: all action type (comparison with next, comparison with value, ect.)
+    :param comp_values: all the values to compare with
+    :return: The formula of the pattern
+    """
     num_ops_remaining = len(np.where(np.array(action_types) != 'nop')[0])
     num_comps_remaining = len(np.where(np.array(comp_values) != 'none')[0])
     if num_ops_remaining == 0:
@@ -97,31 +111,48 @@ def build_formula(bindings, action_types, comp_values):
                               build_formula(bindings[1:], action_types[1:], comp_values[1:]))
 
 def OpenCEP_pattern(actions, action_types, index, comp_values):
+    """
+    Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
+    :param actions: all actions the model suggested
+    :param action_types: all action type (comparison with next, comparison with value, ect.)
+    :param index: episode number
+    :param comp_values: all the values to compare with
+    :return: the condition of the pattern created
+    """
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
                       build_formula(bindings, action_types, comp_values),
                       timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
+    return pattern.condition
 
 
-def single_diffrent_events(curr, rest_bindings):
-    if len(rest_bindings) == 0:
-        return TrueFormula()
-    else:
-        return AndFormula(GreaterThanFormula(IdentifierTerm(curr, lambda x: x["Count"]),
-                                           IdentifierTerm(rest_bindings[0], lambda x: x["Count"])),
-                          single_diffrent_events(curr, rest_bindings[1:]))
-
-def all_diffrent_events(bindings):
-    if len(bindings) == 1:
-        return TrueFormula()
-    else:
-        return AndFormula(single_diffrent_events(bindings[0], bindings[1:]), all_diffrent_events(bindings[1:]))
+# def single_diffrent_events(curr, rest_bindings):
+#     if len(rest_bindings) == 0:
+#         return TrueFormula()
+#     else:
+#         return AndFormula(GreaterThanFormula(IdentifierTerm(curr, lambda x: x["Count"]),
+#                                            IdentifierTerm(rest_bindings[0], lambda x: x["Count"])),
+#                           single_diffrent_events(curr, rest_bindings[1:]))
+#
+# def all_diffrent_events(bindings):
+#     if len(bindings) == 1:
+#         return TrueFormula()
+#     else:
+#         return AndFormula(single_diffrent_events(bindings[0], bindings[1:]), all_diffrent_events(bindings[1:]))
 
 
 
 def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+    """
+    This method receives the given pattern (could be used for several patterns) and runs the CEP engine, writing to
+    output file all matches found
+    :param test_name: Test Name, currently index of epsidoe (i.e. file name to run the engine on)
+    :param patterns: list of at least one pattern to search for in the file
+    :param eval_mechanism_params: unclear, need to ask Ilya
+    :return: total run time of CEP engine, currently this value is unused
+    """
     cep = CEP(patterns, eval_mechanism_params)
     events = FileInputStream(os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name)))
     base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
@@ -135,7 +166,8 @@ def to_var(x):
         x = x.cuda()
     return Variable(x)
 
-
+"""
+Deprecated !
 def prepare_loss_clac(index, window_size, match_size):
     if match_size == 0:
         match_size = 1
@@ -156,9 +188,10 @@ def prepare_loss_clac(index, window_size, match_size):
         for l in print_list:
             f.write(l)
         f.write('}')
+"""
 
-
-
+"""
+Deprecated !
 def prepare_pattern(forward_res, action_types,  index):
     action_types = np.array(action_types)
     num_speical_actions = len(np.where(action_types != "nop")[0])
@@ -205,7 +238,7 @@ def prepare_pattern(forward_res, action_types,  index):
                         else:
                             f.write(" and \n")
         f.write("done")
-
+"""
 
 def get_event_type(event):
     return chr(ord('A') + event)
@@ -238,6 +271,17 @@ def mapping(num_events, value):
 
 
 def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
+    """
+    TODO: rebuild this function!
+    This function is meant to determine the complexity of a pattern encouraging the model to predict complex
+    patterns (long, include many events and comparison with values)
+    :param actions: all actions predicted
+    :param action_types: all action types predicted (none, <, =, >, not on op, op with value)
+    :param comp_values: values to be compared with, this param should be changed
+    :param max_events: maximum number of different events that can be predicted (used for normalization)
+    :param max_ops: maximum number of different operations that can be predicted (used for normalization)
+    :return: the complexity of the given pattern
+    """
     num_events = len(actions)
     num_ops = len(np.where(np.array(action_types) != 'nop')[0])
     num_cops = len(np.where(np.array(action_types) != 'none')[0])

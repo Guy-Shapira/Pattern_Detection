@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import os
-from Model.utils import prepare_loss_clac, prepare_pattern, to_var, mapping, OpenCEP_pattern, pattern_complexity
+from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity
 import tqdm
 import sys
 import time
@@ -153,6 +153,7 @@ with torch.autograd.set_detect_anomaly(True):
         policy_network.optimizer.step()
 
     def train(model, num_epochs=5):
+        total_best = -1
         all_rewards = []
         numsteps = []
         avg_numsteps = []
@@ -209,7 +210,7 @@ with torch.autograd.set_detect_anomaly(True):
                             values.append(value)
                             action_types.append(kind_of_action)
                             log_probs.append(log_prob)
-                            OpenCEP_pattern(actions, action_types, i, comp_values)
+                            eff_pattern = OpenCEP_pattern(actions, action_types, i, comp_values)
                             with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
                                 reward = int(f.read().count("\n") / (len(actions) + 1))
                                 real_rewards.append(reward)
@@ -223,6 +224,14 @@ with torch.autograd.set_detect_anomaly(True):
                                 best_reward = reward
                                 copyfile("Data/Matches/{}Matches.txt".format(i), "best_pattern/best_pattern{}".format(i))
                             os.remove("Data/Matches/{}Matches.txt".format(i))
+                            if reward > total_best:
+                                total_best = reward
+                                with open("best.txt", "a+") as f:
+                                    bindings = [event + " as " + chr(ord("a") + k) for k, event in enumerate(actions)]
+                                    f.write("----\n")
+                                    f.write(",".join(bindings) + "\n")
+                                    f.write(str(eff_pattern) + "\n")
+                                    f.write("----")
                         if count >= model.match_max_size:
                             is_done = True
 
@@ -235,7 +244,7 @@ with torch.autograd.set_detect_anomaly(True):
                     mean_rewards.append(np.mean(all_rewards))
                     real.append(np.sum(real_rewards))
                     mean_real.append(np.mean(real_rewards))
-                    sys.stdout.write("Real reward : {}, compersions : {}\n".format(np.max(real_rewards), len(np.where(np.array(comp_values) != 'none')[0])))
+                    sys.stdout.write("Real reward : {}, comparisons : {}\n".format(np.max(real_rewards), len(np.where(np.array(comp_values) != 'none')[0])))
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
                 # plt.plot(mean_real)
                 plt.plot(mean_rewards, 'g')
