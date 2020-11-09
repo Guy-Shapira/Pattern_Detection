@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import os
-from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity
+from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity, after_epoch_test
 import tqdm
 import sys
 import time
@@ -16,7 +16,7 @@ GAMMA = 0.90
 with torch.autograd.set_detect_anomaly(True):
 
     class ruleMiningClass(nn.Module):
-        def __init__(self, data_path, num_events, match_max_size=5, max_values=5000, window_size=20, max_count=5000):
+        def __init__(self, data_path, num_events, match_max_size=5, max_values=500, window_size=20, max_count=1000):
             super().__init__()
             self.num_events = num_events
             self.match_max_size = match_max_size
@@ -39,7 +39,7 @@ with torch.autograd.set_detect_anomaly(True):
 
             self.value_layer = nn.Linear(self.hidden_size, self.max_values)
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.00005)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
 
         def _create_data(self, data_path):
             date_time_obj = None
@@ -146,17 +146,20 @@ with torch.autograd.set_detect_anomaly(True):
         policy_network.optimizer.step()
 
     def train(model, num_epochs=5):
+        results = []
         total_best = -1
         all_rewards = []
+        quq = - 1
         numsteps = []
         avg_numsteps = []
         temper = 1
         mean_rewards = []
         real, mean_real = [], []
+        best_pattern = None
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
             with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
-                for i, data in enumerate(model.data[:100]):
+                for i, data in enumerate(model.data[epoch * 100 :(epoch + 1 ) * 100]):
                     data_size = len(data)
                     old_desicions = torch.tensor([0] * model.match_max_size)
                     data = torch.cat((data, old_desicions.float()), dim=0)
@@ -205,7 +208,8 @@ with torch.autograd.set_detect_anomaly(True):
                             values.append(value)
                             action_types.append(kind_of_action)
                             log_probs.append(log_prob)
-                            eff_pattern = OpenCEP_pattern(actions, action_types, i, comp_values)
+                            pattern = OpenCEP_pattern(actions, action_types, i, comp_values)
+                            eff_pattern = pattern.condition
                             with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
                                 reward = int(f.read().count("\n") / (len(actions) + 1))
                                 real_rewards.append(reward)
@@ -220,7 +224,9 @@ with torch.autograd.set_detect_anomaly(True):
                                 copyfile("Data/Matches/{}Matches.txt".format(i), "best_pattern/best_pattern{}".format(i))
                             os.remove("Data/Matches/{}Matches.txt".format(i))
                             if reward > total_best:
+                                quq = len(actions)
                                 total_best = reward
+                                best_pattern = pattern
                                 with open("best.txt", "a+") as f:
                                     bindings = [event + " as " + chr(ord("a") + k) for k, event in enumerate(actions)]
                                     f.write("----\n")
@@ -246,10 +252,19 @@ with torch.autograd.set_detect_anomaly(True):
                 plt.xlabel('Episode')
                 labels = ["{}-{}".format(i,i+GRAPH_VALUE) for i in range(0, len(real), GRAPH_VALUE)]
                 locations = [ i + int(GRAPH_VALUE/ 2) for i in range(0, len(real), GRAPH_VALUE)]
-                plt.scatter(locations, reals, c="g")
-                plt.xticks(locations, labels)
-                plt.ylabel('Matches per window')
-                plt.show()
+                # plt.scatter(locations, reals, c="g")
+                # plt.xticks(locations, labels)
+                # plt.ylabel('Matches per window')
+                # plt.show()
+                after_epoch_test(best_pattern)
+                with open("Data/Matches/allMatches.txt", "r") as f:
+                    results.append(int(f.read().count("\n") / (quq + 1)))
+                os.remove("Data/Matches/allMatches.txt")
+
+        print(results)
+        plt.plot(results, "g")
+        plt.show()
+
 
 
     class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=5)

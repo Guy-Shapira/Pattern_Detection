@@ -125,24 +125,16 @@ def OpenCEP_pattern(actions, action_types, index, comp_values):
                       build_formula(bindings, action_types, comp_values),
                       timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
-    return pattern.condition
+    return pattern
 
-
-# def single_diffrent_events(curr, rest_bindings):
-#     if len(rest_bindings) == 0:
-#         return TrueFormula()
-#     else:
-#         return AndFormula(GreaterThanFormula(IdentifierTerm(curr, lambda x: x["Count"]),
-#                                            IdentifierTerm(rest_bindings[0], lambda x: x["Count"])),
-#                           single_diffrent_events(curr, rest_bindings[1:]))
-#
-# def all_diffrent_events(bindings):
-#     if len(bindings) == 1:
-#         return TrueFormula()
-#     else:
-#         return AndFormula(single_diffrent_events(bindings[0], bindings[1:]), all_diffrent_events(bindings[1:]))
-
-
+def after_epoch_test(pattern, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+    cep = CEP([pattern], eval_mechanism_params)
+    events = FileInputStream(os.path.join(absolutePath, 'Data', 'test_data_stream.txt'))
+    base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
+    output_file_name = "%sMatches.txt" % "all"
+    matches_stream = FileOutputStream(base_matches_directory, output_file_name)
+    running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
+    return running_time
 
 def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     """
