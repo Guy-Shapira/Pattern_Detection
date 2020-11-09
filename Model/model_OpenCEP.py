@@ -11,12 +11,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from shutil import copyfile
 import datetime
-
+GRAPH_VALUE = 10
 GAMMA = 0.90
 with torch.autograd.set_detect_anomaly(True):
 
     class ruleMiningClass(nn.Module):
-        def __init__(self, data_path, num_events, match_max_size=9, max_values=5000, window_size=30, max_count=5000):
+        def __init__(self, data_path, num_events, match_max_size=5, max_values=5000, window_size=20, max_count=5000):
             super().__init__()
             self.num_events = num_events
             self.match_max_size = match_max_size
@@ -31,7 +31,7 @@ with torch.autograd.set_detect_anomaly(True):
             self.value_options = 4 * 2 * 2 #not support and value support
             self.num_actions = self.value_options * self.num_events + 1
             self.embedding_desicions = nn.Embedding(self.num_actions, 1)
-            self.linear1_action = nn.Linear((self.window_size + 1) * 9, self.hidden_size)
+            self.linear1_action = nn.Linear(self.window_size * 9 + self.match_max_size, self.hidden_size)
             self.linear2_action = nn.Linear(self.hidden_size, self.num_actions)
             self.critic = nn.Linear(self.hidden_size, 1)
             #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
@@ -39,7 +39,7 @@ with torch.autograd.set_detect_anomaly(True):
 
             self.value_layer = nn.Linear(self.hidden_size, self.max_values)
             self._create_training_dir(data_path)
-            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
+            self.optimizer = torch.optim.Adam(self.parameters(), lr=0.00005)
 
         def _create_data(self, data_path):
             date_time_obj = None
@@ -88,13 +88,6 @@ with torch.autograd.set_detect_anomaly(True):
                     for j in range(i, i + self.window_size):
                         f.write(lines[j])
 
-        # def forward(self, input, T=5):
-        #     x = F.relu(self.linear1_action(input))
-        #     value = self.critic(x)
-        #     x = self.linear2_action(x)
-        #     x = F.softmax(x / T, dim=0)
-        #
-        #     return x, value
         def forward(self, input, mask, T=5):
             def masked_softmax(vec, mask, dim=1, T=5):
                 vec = vec / T
@@ -162,13 +155,13 @@ with torch.autograd.set_detect_anomaly(True):
         real, mean_real = [], []
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
-            with tqdm.tqdm(total=len(os.listdir("Model/training")[:250]), file=pbar_file) as pbar:
-                for i, data in enumerate(model.data[:250]):
+            with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
+                for i, data in enumerate(model.data[:100]):
                     data_size = len(data)
                     old_desicions = torch.tensor([0] * model.match_max_size)
                     data = torch.cat((data, old_desicions.float()), dim=0)
-                    if i % 50 == 0:
-                        temper *= 1.05
+                    # if i % 50 == 0:
+                    #     temper *= 1.05
                     count = 0
                     best_reward = 0.0
                     pbar.update(n=1)
@@ -185,7 +178,7 @@ with torch.autograd.set_detect_anomaly(True):
                         value = value.detach().numpy()[0]
                         entropy_term += entropy
                         if action == model.num_actions - 1:
-                            # mask[-1] = mask[-1].clone() * 1.1
+                            mask[-1] = mask[-1].clone() * 1.1
                             values.append(value)
                             if len(actions) == 0:
                                 log_probs.append(log_prob)
@@ -196,7 +189,9 @@ with torch.autograd.set_detect_anomaly(True):
                                 rewards.append(rewards[-1])
                                 break
                         else:
-                            mask[action] = mask[action].clone() * 0.8
+                            index_mod = action % model.num_events
+                            index_mod = torch.tensor(([1.0] * (index_mod) + [0.95] + [1.0] *(model.num_events - index_mod - 1) ) * model.value_options + [1.0])
+                            mask *= index_mod
                             # mask[-1] = mask[-1].clone() * 1.3
                             action, kind_of_action = mapping(model.num_events, action)
                             if len(kind_of_action.split("value")) > 1:
@@ -242,13 +237,18 @@ with torch.autograd.set_detect_anomaly(True):
                     numsteps.append(len(actions))
                     avg_numsteps.append(np.mean(numsteps))
                     mean_rewards.append(np.mean(all_rewards))
-                    real.append(np.sum(real_rewards))
+                    real.append(np.max(real_rewards))
                     mean_real.append(np.mean(real_rewards))
                     sys.stdout.write("Real reward : {}, comparisons : {}\n".format(np.max(real_rewards), len(np.where(np.array(comp_values) != 'none')[0])))
                     sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
-                # plt.plot(mean_real)
-                plt.plot(mean_rewards, 'g')
+
+                reals = [np.mean(real[i:i+GRAPH_VALUE]) for i in range(0, len(real), GRAPH_VALUE)]
                 plt.xlabel('Episode')
+                labels = ["{}-{}".format(i,i+GRAPH_VALUE) for i in range(0, len(real), GRAPH_VALUE)]
+                locations = [ i + int(GRAPH_VALUE/ 2) for i in range(0, len(real), GRAPH_VALUE)]
+                plt.scatter(locations, reals, c="g")
+                plt.xticks(locations, labels)
+                plt.ylabel('Matches per window')
                 plt.show()
 
 

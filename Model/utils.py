@@ -291,9 +291,9 @@ def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
         return 0.85
     if num_ops == 0:
         return 0.5
-    if  num_unique_events == 1:
+    if num_unique_events == 1:
         if num_unique_events_ops == 1:
-            return 0.1
-        return 0.25
+            return 0.05
+        return 0.1
 
     return (num_unique_events_ops / max_ops)  * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
