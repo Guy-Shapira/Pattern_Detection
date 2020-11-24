@@ -151,7 +151,7 @@ with torch.autograd.set_detect_anomaly(True):
                     mask = torch.tensor([1.0] * model.num_actions)
                     while not is_done:
                         count += 1
-                        action, log_prob = model.get_action(data, mask.detach(), T=temper)
+                        action, log_prob = model.get_event(data, mask.detach(), T=temper)
                         if action == model.num_events - 1:
                             mask[-1] = mask[-1].clone() * 1.1 # to match the "step/state" - apply some change to how we work on the state over time
                             if len(actions) == 0:

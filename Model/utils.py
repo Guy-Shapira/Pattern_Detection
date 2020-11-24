@@ -236,6 +236,8 @@ def get_event_type(event):
     return chr(ord('A') + event)
 
 
+
+
 def mapping(num_events, value):
     # adding "not" support and value support, this value support must!!!! be changed
     # TODO: change model.value_option in a way that this mapping wont be hardcoded!
@@ -292,3 +294,12 @@ def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
             return 0.1
 
     return (num_unique_events_ops / max_ops)  * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
+
+
+def new_mapping(event):
+    """
+    This should be replaced by real mapping!
+    :param event: model's tagged event
+    :return: the actual event
+    """
+    return get_event_type(event)

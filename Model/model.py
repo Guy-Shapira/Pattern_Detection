@@ -152,7 +152,7 @@ with torch.autograd.set_detect_anomaly(True):
                     entropy_term = 0
                     mask = torch.tensor([1.0] * model.num_actions)
                     while not is_done:
-                        action, log_prob, value, entropy = model.get_action(data, mask.detach(), T=temper)
+                        action, log_prob, value, entropy = model.get_event(data, mask.detach(), T=temper)
                         count += 1
                         value = value.detach().numpy()[0]
                         entropy_term += entropy
