@@ -120,12 +120,10 @@ class ruleMiningClass(nn.Module):
         # return x, value
 
     def get_event(self, input, mask=None, T=1):
-        # probs, value = self.forward(Variable(input), mask, T=T)
         probs = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().numpy()
         highest_prob_action = np.random.choice(self.num_events + 1, p=np.squeeze(numpy_probs))
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
-        # entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7))
         return highest_prob_action, log_prob
 
     def get_value(self, input):
@@ -145,11 +143,15 @@ class ruleMiningClass(nn.Module):
         numpy_probs = probs.detach().numpy()
         highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(numpy_probs))
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
-        return highest_prob_action, log_prob
+        highest_prob_value = None
+        mini_action = get_action_type(highest_prob_action, self.num_actions, self.actions)
+        if len(mini_action.split("value")) > 1:
+            value_probs = F.softmax(self.value_layer[index](data), dim=0)
+            numpy_probs = value_probs.detach().numpy()
+            highest_prob_value = np.random.choice(self.max_values, p=np.squeeze(numpy_probs))
+            log_prob += torch.log(value_probs.squeeze(0)[highest_prob_action])
+        return highest_prob_action, highest_prob_value, log_prob
 
-        # TODO: call self.mini_action[index] on data and get action type
-        # if compare with value then call second model
-        # for now maybe only action without value
 
     def get_cols_mini_actions(self, data):
         mini_actions = []
@@ -158,11 +160,11 @@ class ruleMiningClass(nn.Module):
         updated_data = self.linear_base(data)
         for i in range(self.num_cols):
             # TODO: save return values and stuff
-            action, log = self.single_col_mini_action(updated_data, i)
+            action, value, log = self.single_col_mini_action(updated_data, i)
             mini_action = get_action_type(action, self.num_actions, self.actions)
             if len(mini_action.split("value")) > 1:
                 mini_action = mini_action.replace("value", "") #TODO:replace this shit
-                compl_vals.append(5) # TODO: change
+                compl_vals.append(value) # TODO: change
             else:
                 compl_vals.append("nop") #TODO: change
             mini_actions.append(mini_action)
@@ -214,7 +216,7 @@ def update_policy(policy_network, rewards, log_probs):
 #     policy_gradient.backward()
 #     policy_network.optimizer.step()
 
-def train(model, num_epochs=3, test_epcohs=False):
+def train(model, num_epochs=5, test_epcohs=False):
     results = []
     total_best = -1
     all_rewards = []
@@ -227,8 +229,8 @@ def train(model, num_epochs=3, test_epcohs=False):
     best_pattern = None
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:100]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[:100]):
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data[:500]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * model.match_max_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -308,8 +310,8 @@ def train(model, num_epochs=3, test_epcohs=False):
             plt.scatter(locations, real_groups, c="g")
             plt.xticks(locations, labels)
             plt.ylabel('Matches per window')
-            # plt.show()
-            if True:
+            plt.show()
+            if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
                     results.append(int(f.read().count("\n") / (max_len_best + 1)))
