@@ -14,7 +14,8 @@ from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 from plugin.ToyExample.Toy import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
-from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, EqFormula, IdentifierTerm, \
+from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, \
+    EqFormula, IdentifierTerm, \
     AtomicTerm, AndFormula, TrueFormula, NotEqFormula
 from base.PatternStructure import AndOperator, SeqOperator, PrimitiveEventStructure, NegationOperator
 from base.Pattern import Pattern
@@ -48,7 +49,7 @@ def get_next_formula(bindings, action_type, value):
         action_type = action_type.split("v")[1]
         if action_type.startswith("<"):
             return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                          AtomicTerm(value))
+                                      AtomicTerm(value))
         elif action_type.startswith(">"):
             return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
                                       AtomicTerm(value))
@@ -67,22 +68,49 @@ def get_next_formula(bindings, action_type, value):
 
     elif action_type == "<":
         return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+                                  IdentifierTerm(bindings[1], lambda x: x["Value"]))
     elif action_type == ">":
         return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+                                  IdentifierTerm(bindings[1], lambda x: x["Value"]))
     elif action_type == "=":
         return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                   IdentifierTerm(bindings[1], lambda x: x["Value"]))
+                         IdentifierTerm(bindings[1], lambda x: x["Value"]))
     elif action_type == "not <":
         return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
+                                    IdentifierTerm(bindings[1], lambda x: x["Value"]))
     elif action_type == "not >":
         return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                               IdentifierTerm(bindings[1], lambda x: x["Value"]))
-    else: #action_type == "not ="
+                                    IdentifierTerm(bindings[1], lambda x: x["Value"]))
+    else:  # action_type == "not ="
         return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                         IdentifierTerm(bindings[1], lambda x: x["Value"]))
+                            IdentifierTerm(bindings[1], lambda x: x["Value"]))
+
+
+def build_event_formula(bind, actions, comps, is_last=False):
+    num_ops_remaining = sum([ i != 'nop' for i in actions])
+    num_comps_remaining = sum([ i != 'nop' for i in comps])
+    if num_comps_remaining == 0 and num_ops_remaining == 0:
+        return TrueFormula()
+    if is_last:
+        if num_comps_remaining == 0:
+            return TrueFormula()
+        elif comps[0] == "nop":
+            return build_event_formula(bind, actions[1:], comps[1:])
+        else:
+            return get_next_formula(bind, actions[0], comps[0])
+
+    elif num_ops_remaining == 1:
+        if actions[0] == "nop":
+            return build_event_formula(bind, actions[1:], comps[1:])
+        else:
+            return get_next_formula(bind, actions[0], comps[0])
+    else:
+        if actions[0] == "nop":
+            return build_event_formula(bind, actions[1:], comps[1:])
+        else:
+            return AndFormula(get_next_formula(bind, actions[0], comps[0]),
+                              build_event_formula(bind, actions[1:], comps[1:]))
+
 
 def build_formula(bindings, action_types, comp_values):
     """
@@ -92,23 +120,11 @@ def build_formula(bindings, action_types, comp_values):
     :param comp_values: all the values to compare with
     :return: The formula of the pattern
     """
-    num_ops_remaining = len(np.where(np.array(action_types) != 'nop')[0])
-    num_comps_remaining = len(np.where(np.array(comp_values) != 'none')[0])
-    if num_ops_remaining == 0:
-        return TrueFormula()
-    if len(bindings) == 1 and num_comps_remaining == 0:
-        return TrueFormula()
-    elif num_ops_remaining == 1:
-        if action_types[0] == "nop":
-            return build_formula(bindings[1:], action_types[1:], comp_values[1:])
-        else:
-            return get_next_formula(bindings, action_types[0], comp_values[0])
+    if len(bindings) == 1:
+        return build_event_formula(bindings, action_types[0], comp_values[0], is_last=True)
     else:
-        if action_types[0] == "nop":
-            return build_formula(bindings[1:], action_types[1:], comp_values[1:])
-        else:
-            return AndFormula(get_next_formula(bindings, action_types[0], comp_values[0]),
-                              build_formula(bindings[1:], action_types[1:], comp_values[1:]))
+        event_forumla = build_event_formula(bindings, action_types[0], comp_values[0])
+        return AndFormula(event_forumla, build_formula(bindings[1:], action_types[1:], comp_values[1:]))
 
 def OpenCEP_pattern(actions, action_types, index, comp_values):
     """
@@ -121,13 +137,15 @@ def OpenCEP_pattern(actions, action_types, index, comp_values):
     """
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
-    pattern = Pattern(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
-                      build_formula(bindings, action_types, comp_values),
-                      timedelta(seconds=100))
+    pattern = Pattern(
+        SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
+        build_formula(bindings, action_types, comp_values),
+        timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
     return pattern
 
-def after_epoch_test(pattern, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+
+def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     cep = CEP([pattern], eval_mechanism_params)
     events = FileInputStream(os.path.join(absolutePath, 'Data', 'test_data_stream.txt'))
     base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
@@ -136,7 +154,8 @@ def after_epoch_test(pattern, eval_mechanism_params = DEFAULT_TESTING_EVALUATION
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
-def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+
+def run_OpenCEP(test_name, patterns, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     """
     This method receives the given pattern (could be used for several patterns) and runs the CEP engine, writing to
     output file all matches found
@@ -153,10 +172,12 @@ def run_OpenCEP(test_name, patterns, eval_mechanism_params = DEFAULT_TESTING_EVA
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
+
 def to_var(x):
     if torch.cuda.is_available():
         x = x.cuda()
     return Variable(x)
+
 
 """
 Deprecated !
@@ -232,10 +253,9 @@ def prepare_pattern(forward_res, action_types,  index):
         f.write("done")
 """
 
+
 def get_event_type(event):
     return chr(ord('A') + event)
-
-
 
 
 def mapping(num_events, value):
@@ -293,7 +313,7 @@ def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
         else:
             return 0.1
 
-    return (num_unique_events_ops / max_ops)  * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
+    return (num_unique_events_ops / max_ops) * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
 
 
 def new_mapping(event):
@@ -303,3 +323,15 @@ def new_mapping(event):
     :return: the actual event
     """
     return get_event_type(event)
+
+
+def get_action_type(mini_action, total_actions, actions):
+    if mini_action == total_actions:
+        return "nop"
+    else:
+        mini = actions[mini_action % len(actions)]
+        if mini_action >= len(actions) * 3:
+            mini = "v" + mini + " value"
+        elif mini_action >= len(actions) * 2:
+            mini = "not " + mini
+    return mini

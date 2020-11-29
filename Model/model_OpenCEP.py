@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import os
-from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity, after_epoch_test
+from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity, after_epoch_test, new_mapping, get_action_type
 import tqdm
 import sys
 import time
@@ -14,6 +14,8 @@ import datetime
 from difflib import SequenceMatcher
 
 
+#TODO:for now, to unit-test the system, I'm allways comparing with 5 (no use for value_layers), this MUST be
+# changed!!!
 
 GRAPH_VALUE = 10
 GAMMA = 0.90
@@ -40,13 +42,15 @@ class ruleMiningClass(nn.Module):
         self.event_tagger = nn.Linear(self.hidden_size, self.num_events + 1)
 
         self.action_layers = nn.ModuleList([nn.Linear(self.hidden_size, self.num_actions) for _ in range(self.num_cols)])
-        self.critic = nn.Linear(self.hidden_size, 1) # This is probably very shite
+        # self.critic = nn.Linear(self.hidden_size, 1) # This is probably very shite
         #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
         # needs to be smarter if follow is not possible
 
         self.value_layer = nn.ModuleList([nn.Linear(self.hidden_size, self.max_values) for _ in range(self.num_cols)])
         self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
+
+        self.actions = [">", "<", "="]
 
     def _create_data(self, data_path):
         date_time_obj = None
@@ -109,22 +113,23 @@ class ruleMiningClass(nn.Module):
 
         x = F.relu(self.linear_base(input))
 
-        value = self.critic(x)
+        # value = self.critic(x)
         x = self.event_tagger(x)
         x = masked_softmax(x, mask.clone(), dim=0, T=T)
-
-        return x, value
+        return x
+        # return x, value
 
     def get_event(self, input, mask=None, T=1):
-        probs, value = self.forward(Variable(input), mask, T=T)
+        # probs, value = self.forward(Variable(input), mask, T=T)
+        probs = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().numpy()
         highest_prob_action = np.random.choice(self.num_events + 1, p=np.squeeze(numpy_probs))
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
-        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7))
-        return highest_prob_action, log_prob, value, entropy
+        # entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7))
+        return highest_prob_action, log_prob
 
     def get_value(self, input):
-        x = F.relu(self.linear1_action(Variable(input)))
+        x = F.relu(self.linear_base(Variable(input)))
         x = self.value_layer(x)
         probs = F.softmax(x, dim=0)
         numpy_probs = probs.detach().numpy()
@@ -132,49 +137,84 @@ class ruleMiningClass(nn.Module):
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
         return highest_prob_action, log_prob
 
-    def get_mini_action_type(self, data, index):
-        def mini_forward_aux():
-            pass
-            # get action type
-            # if needed get value
-
-
 
     def single_col_mini_action(self, data, index):
+        # replace get event
+        x = F.relu(self.action_layers[index](data))
+        probs = F.softmax(x, dim=0)
+        numpy_probs = probs.detach().numpy()
+        highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(numpy_probs))
+        log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
+        return highest_prob_action, log_prob
+
         # TODO: call self.mini_action[index] on data and get action type
         # if compare with value then call second model
         # for now maybe only action without value
 
-        return
-
     def get_cols_mini_actions(self, data):
+        mini_actions = []
+        log_probs = 0.0
+        compl_vals = []
         updated_data = self.linear_base(data)
         for i in range(self.num_cols):
             # TODO: save return values and stuff
-            single_col_mini_action(self, updated_data, i)
+            action, log = self.single_col_mini_action(updated_data, i)
+            mini_action = get_action_type(action, self.num_actions, self.actions)
+            if len(mini_action.split("value")) > 1:
+                mini_action = mini_action.replace("value", "") #TODO:replace this shit
+                compl_vals.append(5) # TODO: change
+            else:
+                compl_vals.append("nop") #TODO: change
+            mini_actions.append(mini_action)
+            log_probs += log
+        return mini_actions, log_probs, compl_vals
 
 
+def update_policy(policy_network, rewards, log_probs):
+    discounted_rewards = []
 
-def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term):
-    Qvals = np.zeros_like(values)
-    for t in reversed(range(len(rewards))):
-        Qval = rewards[t] + GAMMA * Qval
-        Qvals[t] = Qval
+    for t in range(len(rewards)):
+        Gt = 0
+        pw = 0
+        for r in rewards[t:]:
+            Gt = Gt + GAMMA ** pw * r
+            pw = pw + 1
+        discounted_rewards.append(Gt)
 
-    values = torch.FloatTensor(values)
-    Qvals = torch.FloatTensor(Qvals)
-    log_probs = torch.stack(log_probs)
+    discounted_rewards = torch.tensor(discounted_rewards)
+    discounted_rewards = (discounted_rewards - discounted_rewards.mean()) / (
+                discounted_rewards.std(unbiased=False) + 1e-9)  # normalize discounted rewards
 
-    advantage = Qvals - values
-    actor_loss = (-log_probs * advantage).mean()
-    critic_loss = 0.5 * advantage.pow(2).mean()
-    policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
+    policy_gradient = []
+    for log_prob, Gt in zip(log_probs, discounted_rewards):
+        policy_gradient.append(-log_prob * Gt)
 
-    policy_network.zero_grad()
-    policy_gradient.backward()
+    policy_network.optimizer.zero_grad()
+    policy_gradient = torch.stack(policy_gradient).sum()
+    policy_gradient.backward(retain_graph=True)
     policy_network.optimizer.step()
 
-def train(model, num_epochs=1, test_epcohs=False):
+
+# def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term):
+#     Qvals = np.zeros_like(values)
+#     for t in reversed(range(len(rewards))):
+#         Qval = rewards[t] + GAMMA * Qval
+#         Qvals[t] = Qval
+#
+#     values = torch.FloatTensor(values)
+#     Qvals = torch.FloatTensor(Qvals)
+#     log_probs = torch.stack(log_probs)
+#
+#     advantage = Qvals - values
+#     actor_loss = (-log_probs * advantage).mean()
+#     critic_loss = 0.5 * advantage.pow(2).mean()
+#     policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
+#
+#     policy_network.zero_grad()
+#     policy_gradient.backward()
+#     policy_network.optimizer.step()
+
+def train(model, num_epochs=3, test_epcohs=False):
     results = []
     total_best = -1
     all_rewards = []
@@ -196,20 +236,17 @@ def train(model, num_epochs=1, test_epcohs=False):
                 best_reward = 0.0
                 pbar.update(n=1)
                 is_done = False
-                actions, rewards, log_probs, action_types, values, real_rewards = [], [], [] ,[], [], []
+                events = []
+                actions, rewards, log_probs, action_types, real_rewards = [], [], [] ,[], []
                 comp_values = []
-                entropy_term = 0
-                mask = torch.tensor([1.0] * model.num_actions)
+                mask = torch.tensor([1.0] * (model.num_events + 1))
                 while not is_done:
-                    action, log_prob, value, entropy = model.get_event(data, mask.detach(), T=temper)
+                    action, log_prob = model.get_event(data, mask.detach(), T=temper)
                     data = data.clone()
                     data[data_size + count] = model.embedding_desicions(torch.tensor(action))
                     count += 1
-                    value = value.detach().numpy()[0]
-                    entropy_term += entropy
                     if action == model.num_events:
                         mask[-1] = mask[-1].clone() * 1.1
-                        values.append(value)
                         if len(actions) == 0:
                             log_probs.append(log_prob)
                             rewards.append(-1.1)
@@ -220,20 +257,13 @@ def train(model, num_epochs=1, test_epcohs=False):
                             break
                     else:
                         event = new_mapping(action)
-                        cols_desicions, cols_comp_values, cols_log_probs = get_cols_mini_actions(data)
-                        #
-                        # if len(kind_of_action.split("value")) > 1:
-                        #     comp_value, log_prob_2 = model.get_value(data)
-                        #     kind_of_action = kind_of_action.replace("value", "")
-                        #     log_prob += log_prob_2 #This might be really bad
-                        #     comp_values.append(comp_value)
-                        # else:
-                        #     comp_values.append("none")
-                        # actions.append(action)
-                        # values.append(value)
-                        # action_types.append(kind_of_action)
-                        # log_probs.append(log_prob)
-                        pattern = OpenCEP_pattern(actions, action_types, i, comp_values)
+                        events.append(event)
+                        mini_actions, log, comp_vals = model.get_cols_mini_actions(data)
+                        log_prob += log
+                        log_probs.append(log_prob)
+                        actions.append(mini_actions)
+                        comp_values.append(comp_vals)
+                        pattern = OpenCEP_pattern(events, actions, i, comp_values)
                         eff_pattern = pattern.condition
                         with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
                             reward = int(f.read().count("\n") / (len(actions) + 1))
@@ -241,7 +271,8 @@ def train(model, num_epochs=1, test_epcohs=False):
                             if reward == 0:
                                 rewards.append(-1.5)
                                 break
-                            reward *= pattern_complexity(actions, action_types, comp_values, model.num_events, model.value_options)
+                            # reward *= pattern_complexity(actions, action_types, comp_values, model.num_events, model.value_options)
+                            # TODO: need to design new fitness function
                             rewards.append(reward)
                         if reward > best_reward:
                             best_reward = reward
@@ -260,16 +291,14 @@ def train(model, num_epochs=1, test_epcohs=False):
                     if count >= model.match_max_size:
                         is_done = True
 
-                Qval, _ = model.forward(data, mask, T=temper)
-                Qval = Qval.detach().numpy()[0]
-                update_policy(model, rewards, log_probs, values, Qval, entropy_term)
+                update_policy(model, rewards, log_probs)
                 all_rewards.append(np.sum(rewards))
                 numsteps.append(len(actions))
                 avg_numsteps.append(np.mean(numsteps))
                 mean_rewards.append(np.mean(all_rewards))
                 real.append(np.max(real_rewards))
                 mean_real.append(np.mean(real_rewards))
-                sys.stdout.write("Real reward : {}, comparisons : {}\n".format(np.max(real_rewards), len(np.where(np.array(comp_values) != 'none')[0])))
+                sys.stdout.write("Real reward : {}, comparisons : {}\n".format(np.max(real_rewards), sum([i != 'nop' for i in comp_values])))
                 sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
 
             real_groups = [np.mean(real[i:i+GRAPH_VALUE]) for i in range(0, len(real), GRAPH_VALUE)]
@@ -298,7 +327,7 @@ def predict_window(model, i, data):
     count = 0
     is_done = False
     actions, action_types, comp_values = [], [], []
-    mask = torch.tensor([1.0] * model.num_actions)
+    mask = torch.tensor([1.0] * model.num_events + 1)
     pattern = None
     while not is_done:
         action, _, _, _ = model.get_event(data, mask.detach())
@@ -368,7 +397,7 @@ def predict_patterns(model):
 def main():
     class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=5)
     train(class_inst)
-    predict_patterns(model=class_inst)
+    # predict_patterns(model=class_inst)
 
 
 if __name__ == "__main__":
