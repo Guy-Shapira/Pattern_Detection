@@ -16,7 +16,7 @@ def build_data_stream():
                 value = str(i)
                 for _ in range(3):
                     s_counter = str(counter)
-                    event = ','.join([name, value, s_counter]) + "\n"
+                    event = ','.join([name, value, value, s_counter]) + "\n"
                     file.write(event)
                     counter += datetime.timedelta(seconds=1)
                     name = chr(ord(name) + 1)
@@ -24,7 +24,7 @@ def build_data_stream():
                 name = str(random.choice(constants['event_types']))
                 value = str(i)
                 s_counter = str(counter)
-                event = ','.join([name, value, s_counter]) + "\n"
+                event = ','.join([name, value, value, s_counter]) + "\n"
                 file.write(event)
                 counter += datetime.timedelta(seconds=1)
         file.close()

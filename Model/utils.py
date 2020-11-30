@@ -12,7 +12,8 @@ from misc.Utils import generate_matches
 from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
 from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
-from plugin.ToyExample.Toy import DataFormatter
+# from plugin.ToyExample.Toy import DataFormatter
+from plugin.ToyExample.MultivariantToy import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, \
     EqFormula, IdentifierTerm, \
@@ -35,12 +36,13 @@ DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = \
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
-def get_next_formula(bindings, action_type, value):
+def get_next_formula(bindings, action_type, value, attribute):
     """
     Creates a single condition in the formula of the pattern
     :param bindings: All bindings (events as symbols) remining
     :param action_type: current action type (comparison with next, comparison with value, ect.)
     :param value: current the values to compare with
+    :param attribute: system attribute to create a condition in
     :return: the next part of the formula
     """
     if action_type == "nop":
@@ -48,45 +50,45 @@ def get_next_formula(bindings, action_type, value):
     elif len(action_type.split("v")) == 2:
         action_type = action_type.split("v")[1]
         if action_type.startswith("<"):
-            return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                                       AtomicTerm(value))
         elif action_type.startswith(">"):
-            return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                                       AtomicTerm(value))
         elif action_type.startswith("="):
-            return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return EqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                              AtomicTerm(value))
         elif action_type.startswith("not <"):
-            return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                                         AtomicTerm(value))
         elif action_type.startswith("not >"):
-            return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                                         AtomicTerm(value))
         else:  # action_type == "not ="
-            return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
+            return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
                                 AtomicTerm(value))
 
     elif action_type == "<":
-        return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                  IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                                  IdentifierTerm(bindings[1], lambda x: x[attribute]))
     elif action_type == ">":
-        return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                  IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                                  IdentifierTerm(bindings[1], lambda x: x[attribute]))
     elif action_type == "=":
-        return EqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                         IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return EqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                         IdentifierTerm(bindings[1], lambda x: x[attribute]))
     elif action_type == "not <":
-        return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                    IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                                    IdentifierTerm(bindings[1], lambda x: x[attribute]))
     elif action_type == "not >":
-        return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                                    IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                                    IdentifierTerm(bindings[1], lambda x: x[attribute]))
     else:  # action_type == "not ="
-        return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x["Value"]),
-                            IdentifierTerm(bindings[1], lambda x: x["Value"]))
+        return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                            IdentifierTerm(bindings[1], lambda x: x[attribute]))
 
 
-def build_event_formula(bind, actions, comps, is_last=False):
+def build_event_formula(bind, actions, comps, cols, is_last=False):
     num_ops_remaining = sum([ i != 'nop' for i in actions])
     num_comps_remaining = sum([ i != 'nop' for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
@@ -95,51 +97,55 @@ def build_event_formula(bind, actions, comps, is_last=False):
         if num_comps_remaining == 0:
             return TrueFormula()
         elif comps[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:])
+            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], is_last=True)
         else:
-            return get_next_formula(bind, actions[0], comps[0])
+            return get_next_formula(bind, actions[0], comps[0], cols[0])
 
     elif num_ops_remaining == 1:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:])
+            return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
         else:
-            return get_next_formula(bind, actions[0], comps[0])
+            return get_next_formula(bind, actions[0], comps[0], cols[0])
     else:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:])
+            return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
         else:
-            return AndFormula(get_next_formula(bind, actions[0], comps[0]),
-                              build_event_formula(bind, actions[1:], comps[1:]))
+            return AndFormula(get_next_formula(bind, actions[0], comps[0], cols[0]),
+                              build_event_formula(bind, actions[1:], comps[1:], cols[1:]))
 
 
-def build_formula(bindings, action_types, comp_values):
+def build_formula(bindings, action_types, comp_values, cols):
     """
     Build the condition formula of the pattern
     :param bindings: All bindings (events as symbols)
     :param action_types: all action type (comparison with next, comparison with value, ect.)
     :param comp_values: all the values to compare with
+    :param cols: system attributes
     :return: The formula of the pattern
     """
     if len(bindings) == 1:
-        return build_event_formula(bindings, action_types[0], comp_values[0], is_last=True)
+        return build_event_formula(bindings, action_types[0], comp_values[0], cols[0], is_last=True)
     else:
-        event_forumla = build_event_formula(bindings, action_types[0], comp_values[0])
-        return AndFormula(event_forumla, build_formula(bindings[1:], action_types[1:], comp_values[1:]))
+        event_forumla = build_event_formula(bindings, action_types[0], comp_values[0], cols[0])
+        return AndFormula(event_forumla, build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:]))
 
-def OpenCEP_pattern(actions, action_types, index, comp_values):
+def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param actions: all actions the model suggested
     :param action_types: all action type (comparison with next, comparison with value, ect.)
     :param index: episode number
     :param comp_values: all the values to compare with
+    :param cols: system columns- attributes
     :return: the condition of the pattern created
     """
+    cols_rep = []
+    [cols_rep.append(cols) for i in range(len(actions))]
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     pattern = Pattern(
         SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
-        build_formula(bindings, action_types, comp_values),
+        build_formula(bindings, action_types, comp_values, cols_rep),
         timedelta(seconds=100))
     run_OpenCEP(str(index), [pattern])
     return pattern
@@ -284,23 +290,27 @@ def mapping(num_events, value):
     return value, kind_of_action
 
 
-def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
+def pattern_complexity(events, actions, comp_values, max_events, max_ops):
     """
     TODO: rebuild this function!
     This function is meant to determine the complexity of a pattern encouraging the model to predict complex
     patterns (long, include many events and comparison with values)
-    :param actions: all actions predicted
-    :param action_types: all action types predicted (none, <, =, >, not on op, op with value)
+    :param events: all actions predicted
+    :param actions: all action types predicted (none, <, =, >, not on op, op with value)
     :param comp_values: values to be compared with, this param should be changed
     :param max_events: maximum number of different events that can be predicted (used for normalization)
     :param max_ops: maximum number of different operations that can be predicted (used for normalization)
     :return: the complexity of the given pattern
     """
-    num_events = len(actions)
-    num_ops = len(np.where(np.array(action_types) != 'nop')[0])
-    num_cops = len(np.where(np.array(action_types) != 'none')[0])
-    num_unique_events = len(np.unique(actions))
-    num_unique_events_ops = len(np.unique(action_types))
+    num_events = len(events)
+    flatten = lambda list_list: [item for sublist in list_list for item in sublist]
+
+    flat_actions = flatten(actions)
+    flat_values = flatten(comp_values)
+    num_ops = sum([i != 'nop' for i in flat_actions])
+    num_cops = sum([i != 'nop' for i in flat_values])
+    num_unique_events = len(np.unique(events))
+    num_unique_events_ops = len(np.unique(flat_actions))
     if num_events == 1:
         return 0.85
     if num_ops == 0:
@@ -316,6 +326,7 @@ def pattern_complexity(actions, action_types, comp_values, max_events, max_ops):
     return (num_unique_events_ops / max_ops) * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
 
 
+
 def new_mapping(event):
     """
     This should be replaced by real mapping!
@@ -326,6 +337,14 @@ def new_mapping(event):
 
 
 def get_action_type(mini_action, total_actions, actions):
+    """
+    refactoring of kind_of_action function.
+    gets a-list of all selected mini-actions, the number of all possible options and all operator options
+    :param mini_action: list of mini-actions selected in current step, each mini action is in a different column
+    :param total_actions:
+    :param actions:
+    :return:
+    """
     if mini_action == total_actions:
         return "nop"
     else:
