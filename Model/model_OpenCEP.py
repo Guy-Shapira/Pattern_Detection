@@ -1,7 +1,15 @@
 import torch
 import torch.nn as nn
 import os
-from Model.utils import to_var, mapping, OpenCEP_pattern, pattern_complexity, after_epoch_test, new_mapping, get_action_type
+from Model.utils import (
+    to_var,
+    mapping,
+    OpenCEP_pattern,
+    pattern_complexity,
+    after_epoch_test,
+    new_mapping,
+    get_action_type,
+)
 import tqdm
 import sys
 import time
@@ -14,7 +22,7 @@ import datetime
 from difflib import SequenceMatcher
 
 
-#TODO:for now, to unit-test the system, I'm allways comparing with 5 (no use for value_layers), this MUST be
+# TODO:for now, to unit-test the system, I'm allways comparing with 5 (no use for value_layers), this MUST be
 # changed!!!
 
 GRAPH_VALUE = 10
@@ -22,9 +30,19 @@ GAMMA = 0.90
 
 EMBDEDDING_TOTAL_SIZE = 12
 
+
 class ruleMiningClass(nn.Module):
-    #TODO: switch all max_inputs to lists of len num_cols
-    def __init__(self, data_path, num_events, match_max_size=8, max_values=500, window_size=20, max_count=2000, num_cols=2):
+    # TODO: switch all max_inputs to lists of len num_cols
+    def __init__(
+        self,
+        data_path,
+        num_events,
+        match_max_size=8,
+        max_values=500,
+        window_size=20,
+        max_count=2000,
+        num_cols=2,
+    ):
         super().__init__()
         self.num_events = num_events
         self.match_max_size = match_max_size
@@ -37,18 +55,28 @@ class ruleMiningClass(nn.Module):
         self.data = self.data.view(len(self.data), -1)
         self.hidden_size = 2048
         self.num_cols = num_cols
-        self.num_actions = 3 * 3 + 1 #[>|<|= * 3(reg, neg, value)| nop]
+        self.num_actions = 3 * 3 + 1  # [>|<|= * 3(reg, neg, value)| nop]
         # self.num_actions = self.value_options * self.num_events + 1
         self.embedding_desicions = nn.Embedding(self.num_actions, 1)
-        self.linear_base = nn.Linear(self.window_size * EMBDEDDING_TOTAL_SIZE + self.match_max_size, self.hidden_size)
+        self.linear_base = nn.Linear(
+            self.window_size * EMBDEDDING_TOTAL_SIZE + self.match_max_size,
+            self.hidden_size,
+        )
         self.event_tagger = nn.Linear(self.hidden_size, self.num_events + 1)
 
-        self.action_layers = nn.ModuleList([nn.Linear(self.hidden_size, self.num_actions) for _ in range(self.num_cols)])
-        self.critic = nn.Linear(self.hidden_size, 1) # This is probably very shite
-        #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
+        self.action_layers = nn.ModuleList(
+            [
+                nn.Linear(self.hidden_size, self.num_actions)
+                for _ in range(self.num_cols)
+            ]
+        )
+        self.critic = nn.Linear(self.hidden_size, 1)  # This is probably very shite
+        # TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
         # needs to be smarter if follow is not possible
 
-        self.value_layer = nn.ModuleList([nn.Linear(self.hidden_size, self.max_values) for _ in range(self.num_cols)])
+        self.value_layer = nn.ModuleList(
+            [nn.Linear(self.hidden_size, self.max_values) for _ in range(self.num_cols)]
+        )
         self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
 
@@ -66,7 +94,7 @@ class ruleMiningClass(nn.Module):
                 value1 = self.embedding_values(torch.tensor(int(value1)))
                 value2 = self.embedding_values(torch.tensor(int(value2)))
                 count = count[:-1]
-                count = datetime.datetime.strptime(count, '%Y-%m-%d %H:%M:%S.%f')
+                count = datetime.datetime.strptime(count, "%Y-%m-%d %H:%M:%S.%f")
                 if date_time_obj == None:
                     date_time_obj = count
                 count -= date_time_obj
@@ -83,10 +111,10 @@ class ruleMiningClass(nn.Module):
         sliding_window_data = None
         for i in range(0, len(data) - self.window_size):
             if sliding_window_data is None:
-                sliding_window_data = data[i: i + self.window_size]
+                sliding_window_data = data[i : i + self.window_size]
                 sliding_window_data = sliding_window_data.unsqueeze(0)
             else:
-                to_add = data[i: i + self.window_size].unsqueeze(0)
+                to_add = data[i : i + self.window_size].unsqueeze(0)
                 sliding_window_data = torch.cat((sliding_window_data, to_add))
         return sliding_window_data
 
@@ -108,12 +136,12 @@ class ruleMiningClass(nn.Module):
             vec = vec / T
             masked_vec = vec * mask.float()
             max_vec = torch.max(masked_vec, dim=dim, keepdim=True)[0]
-            exps = torch.exp(masked_vec-max_vec)
+            exps = torch.exp(masked_vec - max_vec)
             masked_exps = exps * mask.float()
             masked_sums = masked_exps.sum(dim, keepdim=True)
-            zeros = (masked_sums == 0)
+            zeros = masked_sums == 0
             masked_sums += zeros.float()
-            return masked_exps/masked_sums
+            return masked_exps / masked_sums
 
         x = F.relu(self.linear_base(input))
 
@@ -126,7 +154,9 @@ class ruleMiningClass(nn.Module):
     def get_event(self, input, mask=None, T=1):
         probs, value = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().numpy()
-        highest_prob_action = np.random.choice(self.num_events + 1, p=np.squeeze(numpy_probs))
+        highest_prob_action = np.random.choice(
+            self.num_events + 1, p=np.squeeze(numpy_probs)
+        )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7))
         return highest_prob_action, log_prob, value, entropy
@@ -136,27 +166,33 @@ class ruleMiningClass(nn.Module):
         x = self.value_layer(x)
         probs = F.softmax(x, dim=0)
         numpy_probs = probs.detach().numpy()
-        highest_prob_action = np.random.choice(self.max_values, p=np.squeeze(numpy_probs))
+        highest_prob_action = np.random.choice(
+            self.max_values, p=np.squeeze(numpy_probs)
+        )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
         return highest_prob_action, log_prob
-
 
     def single_col_mini_action(self, data, index):
         # replace get event
         x = F.relu(self.action_layers[index](data))
         probs = F.softmax(x, dim=0)
         numpy_probs = probs.detach().numpy()
-        highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(numpy_probs))
+        highest_prob_action = np.random.choice(
+            self.num_actions, p=np.squeeze(numpy_probs)
+        )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
         highest_prob_value = None
-        mini_action = get_action_type(highest_prob_action, self.num_actions, self.actions)
+        mini_action = get_action_type(
+            highest_prob_action, self.num_actions, self.actions
+        )
         if len(mini_action.split("value")) > 1:
             value_probs = F.softmax(self.value_layer[index](data), dim=0)
             numpy_probs = value_probs.detach().numpy()
-            highest_prob_value = np.random.choice(self.max_values, p=np.squeeze(numpy_probs))
+            highest_prob_value = np.random.choice(
+                self.max_values, p=np.squeeze(numpy_probs)
+            )
             log_prob += torch.log(value_probs.squeeze(0)[highest_prob_action])
         return highest_prob_action, highest_prob_value, log_prob
-
 
     def get_cols_mini_actions(self, data):
         mini_actions = []
@@ -168,12 +204,12 @@ class ruleMiningClass(nn.Module):
             action, value, log = self.single_col_mini_action(updated_data, i)
             mini_action = get_action_type(action, self.num_actions, self.actions)
             if len(mini_action.split("value")) > 1:
-                mini_action = mini_action.replace("value", "") #TODO:replace this shit
-                compl_vals.append(value) # TODO: change
+                mini_action = mini_action.replace("value", "")  # TODO:replace this shit
+                compl_vals.append(value)  # TODO: change
             else:
-                compl_vals.append("nop") #TODO: change
+                compl_vals.append("nop")  # TODO: change
             mini_actions.append(mini_action)
-            log_probs += log
+            log_probs += log / self.num_cols
         return mini_actions, log_probs, compl_vals
 
 
@@ -221,11 +257,12 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     policy_gradient.backward(retain_graph=True)
     policy_network.optimizer.step()
 
+
 def train(model, num_epochs=5, test_epcohs=False):
     results = []
     total_best = -1
     all_rewards = []
-    max_len_best = - 1
+    max_len_best = -1
     numsteps = []
     avg_numsteps = []
     temper = 1
@@ -234,7 +271,9 @@ def train(model, num_epochs=5, test_epcohs=False):
     best_pattern = None
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
+        with tqdm.tqdm(
+            total=len(os.listdir("Model/training")[:500]), file=pbar_file
+        ) as pbar:
             for i, data in enumerate(model.data[:500]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * model.match_max_size)
@@ -244,16 +283,26 @@ def train(model, num_epochs=5, test_epcohs=False):
                 pbar.update(n=1)
                 is_done = False
                 events = []
-                actions, rewards, log_probs, action_types, real_rewards = [], [], [] ,[], []
+                actions, rewards, log_probs, action_types, real_rewards = (
+                    [],
+                    [],
+                    [],
+                    [],
+                    [],
+                )
                 values = []
                 comp_values = []
                 entropy_term = 0
                 temper = 1
                 mask = torch.tensor([1.0] * (model.num_events + 1))
                 while not is_done:
-                    action, log_prob, value, entropy = model.get_event(data, mask.detach(), T=temper)
+                    action, log_prob, value, entropy = model.get_event(
+                        data, mask.detach(), T=temper
+                    )
                     data = data.clone()
-                    data[data_size + count] = model.embedding_desicions(torch.tensor(action))
+                    data[data_size + count] = model.embedding_desicions(
+                        torch.tensor(action)
+                    )
                     # if i % 50 == 0:
                     #     temper *= 1.05
                     count += 1
@@ -278,27 +327,35 @@ def train(model, num_epochs=5, test_epcohs=False):
                         log_probs.append(log_prob)
                         actions.append(mini_actions)
                         comp_values.append(comp_vals)
-                        pattern = OpenCEP_pattern(events, actions, i, comp_values, model.cols)
+                        pattern = OpenCEP_pattern(
+                            events, actions, i, comp_values, model.cols
+                        )
                         eff_pattern = pattern.condition
                         with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
                             reward = int(f.read().count("\n") / (len(actions) + 1))
                             real_rewards.append(reward)
                             if reward == 0:
-                                rewards.append(-1.5)
+                                rewards.append(-0.75)
                                 break
                             # reward *= pattern_complexity(events, actions, comp_values, model.num_events, model.num_actions)
                             # TODO: need to design new fitness function
                             rewards.append(reward)
                         if reward > best_reward:
                             best_reward = reward
-                            copyfile("Data/Matches/{}Matches.txt".format(i), "best_pattern/best_pattern{}".format(i))
+                            copyfile(
+                                "Data/Matches/{}Matches.txt".format(i),
+                                "best_pattern/best_pattern{}".format(i),
+                            )
                             max_len_best = len(actions)
                             total_best = reward
                             best_pattern = pattern
                         os.remove("Data/Matches/{}Matches.txt".format(i))
                         if reward > total_best:
                             with open("best.txt", "a+") as f:
-                                bindings = [event + " as " + chr(ord("a") + k) for k, event in enumerate(actions)]
+                                bindings = [
+                                    event + " as " + chr(ord("a") + k)
+                                    for k, event in enumerate(actions)
+                                ]
                                 f.write("----\n")
                                 f.write(",".join(bindings) + "\n")
                                 f.write(str(eff_pattern) + "\n")
@@ -316,16 +373,36 @@ def train(model, num_epochs=5, test_epcohs=False):
                 mean_rewards.append(np.mean(all_rewards))
                 real.append(np.max(real_rewards))
                 mean_real.append(np.mean(real_rewards))
-                sys.stdout.write("Real reward : {}, comparisons : {}\n".format(np.max(real_rewards), sum([i != 'nop' for i in comp_values])))
-                sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
+                sys.stdout.write(
+                    "Real reward : {}, comparisons : {}\n".format(
+                        np.max(real_rewards),
+                        sum([i != "nop" for sub in comp_values for i in sub]),
+                    )
+                )
+                sys.stdout.write(
+                    "episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(
+                        i,
+                        np.round(np.sum(rewards), decimals=3),
+                        np.round(np.mean(all_rewards), decimals=3),
+                        len(actions),
+                    )
+                )
 
-            real_groups = [np.mean(real[i:i + GRAPH_VALUE]) for i in range(0, len(real), GRAPH_VALUE)]
-            plt.xlabel('Episode')
-            labels = ["{}-{}".format(i,i + GRAPH_VALUE) for i in range(0, len(real), GRAPH_VALUE)]
-            locations = [ i + int(GRAPH_VALUE / 2) for i in range(0, len(real), GRAPH_VALUE)]
+            real_groups = [
+                np.mean(real[i : i + GRAPH_VALUE])
+                for i in range(0, len(real), GRAPH_VALUE)
+            ]
+            plt.xlabel("Episode")
+            labels = [
+                "{}-{}".format(i, i + GRAPH_VALUE)
+                for i in range(0, len(real), GRAPH_VALUE)
+            ]
+            locations = [
+                i + int(GRAPH_VALUE / 2) for i in range(0, len(real), GRAPH_VALUE)
+            ]
             plt.scatter(locations, real_groups, c="g")
             plt.xticks(locations, labels)
-            plt.ylabel('Matches per window')
+            plt.ylabel("Matches per window")
             plt.show()
             if False:
                 after_epoch_test(best_pattern)
@@ -356,8 +433,15 @@ def predict_window(model, i, data):
             is_done = True
         else:
             index_mod = action % model.num_events
-            index_mod = torch.tensor(([1.0] * (index_mod) + [0.95] + [1.0] * (
-                    model.num_events - index_mod - 1)) * model.value_options + [1.5])
+            index_mod = torch.tensor(
+                (
+                    [1.0] * (index_mod)
+                    + [0.95]
+                    + [1.0] * (model.num_events - index_mod - 1)
+                )
+                * model.value_options
+                + [1.5]
+            )
             mask *= index_mod
             mask[-1] = mask[-1].clone() * 1.5
             action, kind_of_action = mapping(model.num_events, action)
@@ -374,6 +458,7 @@ def predict_window(model, i, data):
         if count >= model.match_max_size:
             is_done = True
     return actions, pattern
+
 
 def predict_patterns(model):
     def choose_best_pattern(events):
@@ -405,7 +490,7 @@ def predict_patterns(model):
     best_index = choose_best_pattern(events)
     print(events[best_index])
     print(events)
-    avg_len = sum([len(e) for e in events])/ len(events)
+    avg_len = sum([len(e) for e in events]) / len(events)
     print(avg_len)
     after_epoch_test(patterns[best_index])
     with open("Data/Matches/allMatches.txt", "r") as f:

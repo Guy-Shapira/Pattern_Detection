@@ -17,8 +17,12 @@ class DynamicProgrammingBushyTreeBuilder(TreePlanBuilder):
     """
     Creates a bushy tree using a dynamic programming algorithm.
     """
+
     def _create_tree_topology(self, pattern: Pattern):
-        if pattern.statistics_type == StatisticsTypes.SELECTIVITY_MATRIX_AND_ARRIVAL_RATES:
+        if (
+            pattern.statistics_type
+            == StatisticsTypes.SELECTIVITY_MATRIX_AND_ARRIVAL_RATES
+        ):
             (selectivity_matrix, arrival_rates) = pattern.statistics
         else:
             raise MissingStatisticsException()
@@ -29,21 +33,29 @@ class DynamicProgrammingBushyTreeBuilder(TreePlanBuilder):
 
         items = frozenset(range(args_num))
         # Save subsets' optimal topologies, the cost and the left to add items.
-        sub_trees = {frozenset({i}): (TreePlanLeafNode(i),
-                                      self._get_plan_cost(pattern, TreePlanLeafNode(i)),
-                                      items.difference({i}))
-                     for i in items}
+        sub_trees = {
+            frozenset({i}): (
+                TreePlanLeafNode(i),
+                self._get_plan_cost(pattern, TreePlanLeafNode(i)),
+                items.difference({i}),
+            )
+            for i in items
+        }
 
         # for each subset of size i, find optimal topology for these subsets according to size (i-1) subsets.
         for i in range(2, args_num + 1):
             for tSubset in combinations(items, i):
                 subset = frozenset(tSubset)
-                disjoint_sets_iter = get_all_disjoint_sets(subset)  # iterator for all disjoint splits of a set.
+                disjoint_sets_iter = get_all_disjoint_sets(
+                    subset
+                )  # iterator for all disjoint splits of a set.
                 # use first option as speculative best.
                 set1_, set2_ = next(disjoint_sets_iter)
                 tree1_, _, _ = sub_trees[set1_]
                 tree2_, _, _ = sub_trees[set2_]
-                new_tree_ = TreePlanBuilder._instantiate_binary_node(pattern, tree1_, tree2_)
+                new_tree_ = TreePlanBuilder._instantiate_binary_node(
+                    pattern, tree1_, tree2_
+                )
                 new_cost_ = self._get_plan_cost(pattern, new_tree_)
                 new_left_ = items.difference({subset})
                 sub_trees[subset] = new_tree_, new_cost_, new_left_
@@ -51,21 +63,29 @@ class DynamicProgrammingBushyTreeBuilder(TreePlanBuilder):
                 for set1, set2 in disjoint_sets_iter:
                     tree1, _, _ = sub_trees[set1]
                     tree2, _, _ = sub_trees[set2]
-                    new_tree = TreePlanBuilder._instantiate_binary_node(pattern, tree1, tree2)
+                    new_tree = TreePlanBuilder._instantiate_binary_node(
+                        pattern, tree1, tree2
+                    )
                     new_cost = self._get_plan_cost(pattern, new_tree)
                     _, cost, left = sub_trees[subset]
                     # if new subset's topology is better, then update to it.
                     if new_cost < cost:
                         sub_trees[subset] = new_tree, new_cost, left
-        return sub_trees[items][0]  # return the best topology (index 0 at tuple) for items - the set of all arguments.
+        return sub_trees[items][
+            0
+        ]  # return the best topology (index 0 at tuple) for items - the set of all arguments.
 
 
 class ZStreamTreeBuilder(TreePlanBuilder):
     """
     Creates a bushy tree using ZStream algorithm.
     """
+
     def _create_tree_topology(self, pattern: Pattern):
-        if pattern.statistics_type == StatisticsTypes.SELECTIVITY_MATRIX_AND_ARRIVAL_RATES:
+        if (
+            pattern.statistics_type
+            == StatisticsTypes.SELECTIVITY_MATRIX_AND_ARRIVAL_RATES
+        ):
             (selectivity_matrix, arrival_rates) = pattern.statistics
         else:
             raise MissingStatisticsException()
@@ -74,7 +94,10 @@ class ZStreamTreeBuilder(TreePlanBuilder):
         args_num = len(order)
         items = tuple(order)
         suborders = {
-            (i,): (TreePlanLeafNode(i), self._get_plan_cost(pattern, TreePlanLeafNode(i)))
+            (i,): (
+                TreePlanLeafNode(i),
+                self._get_plan_cost(pattern, TreePlanLeafNode(i)),
+            )
             for i in items
         }
 
@@ -98,14 +121,20 @@ class ZStreamTreeBuilder(TreePlanBuilder):
                     tree1, _ = suborders[order1]
                     tree2, _ = suborders[order2]
                     _, prev_cost = suborders[suborder]
-                    new_tree = TreePlanBuilder._instantiate_binary_node(pattern, tree1, tree2)
+                    new_tree = TreePlanBuilder._instantiate_binary_node(
+                        pattern, tree1, tree2
+                    )
                     new_cost = self._get_plan_cost(pattern, new_tree)
                     if new_cost < prev_cost:
                         suborders[suborder] = new_tree, new_cost
-        return suborders[items][0]  # return the topology (index 0 at tuple) of the entire order, indexed to 'items'.
+        return suborders[items][
+            0
+        ]  # return the topology (index 0 at tuple) of the entire order, indexed to 'items'.
 
     @staticmethod
-    def _get_initial_order(selectivity_matrix: List[List[float]], arrival_rates: List[int]):
+    def _get_initial_order(
+        selectivity_matrix: List[List[float]], arrival_rates: List[int]
+    ):
         return list(range(len(selectivity_matrix)))
 
 
@@ -113,6 +142,11 @@ class ZStreamOrdTreeBuilder(ZStreamTreeBuilder):
     """
     Creates a bushy tree using ZStream algorithm with the leaf order obtained using an order-based greedy algorithm.
     """
+
     @staticmethod
-    def _get_initial_order(selectivity_matrix: List[List[float]], arrival_rates: List[int]):
-        return GreedyLeftDeepTreeBuilder.calculate_greedy_order(selectivity_matrix, arrival_rates)
+    def _get_initial_order(
+        selectivity_matrix: List[List[float]], arrival_rates: List[int]
+    ):
+        return GreedyLeftDeepTreeBuilder.calculate_greedy_order(
+            selectivity_matrix, arrival_rates
+        )

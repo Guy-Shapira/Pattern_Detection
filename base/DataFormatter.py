@@ -8,6 +8,7 @@ class EventTypeClassifier(ABC):
     This functionality is intentionally separated from DataFormatter class to enable multiple type hierachies for a
     given data format.
     """
+
     def get_event_type(self, event_payload: dict):
         """
         Deduces and returns the type of the event specified by the given payload.
@@ -20,6 +21,7 @@ class DataFormatter(ABC):
     An abstract class encapsulating the details regarding the input data format.
     A dedicated DataFormatter is expected to be implemented for each new type of input / dataset used by the system.
     """
+
     def __init__(self, event_type_classifier: EventTypeClassifier):
         self.__event_type_classifier = event_type_classifier
 

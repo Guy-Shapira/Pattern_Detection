@@ -4,27 +4,32 @@ import pandas as pd
 import shutil
 import datetime
 
+
 def build_data_stream():
-    for size, path in zip([constants['train_size'], constants['test_size']],
-                          [constants['train_stream_path'], constants['test_stream_path']]):
+    for size, path in zip(
+        [constants["train_size"], constants["test_size"]],
+        [constants["train_stream_path"], constants["test_stream_path"]],
+    ):
         file = open(path, "w")
         counter = datetime.datetime.now()
         for i in range(size):
             rand_val = random.randint(0, 5)
             if rand_val < 3:
                 name = "A"
-                value = str(i)
+                value1 = str(i)
+                value2 = str(random.randint(0, 15))
                 for _ in range(3):
                     s_counter = str(counter)
-                    event = ','.join([name, value, value, s_counter]) + "\n"
+                    event = ",".join([name, value1, value2, s_counter]) + "\n"
                     file.write(event)
                     counter += datetime.timedelta(seconds=1)
                     name = chr(ord(name) + 1)
             else:
-                name = str(random.choice(constants['event_types']))
-                value = str(i)
+                name = str(random.choice(constants["event_types"]))
+                value1 = str(i)
+                value2 = str(random.randint(0, 15))
                 s_counter = str(counter)
-                event = ','.join([name, value, value, s_counter]) + "\n"
+                event = ",".join([name, value1, value2, s_counter]) + "\n"
                 file.write(event)
                 counter += datetime.timedelta(seconds=1)
         file.close()
@@ -33,7 +38,10 @@ def build_data_stream():
 def pad_matches():
     def pad_matches_(is_train):
         def find_maximum_line():
-            f = open(constants['train_matches'] if is_train else constants['test_matches'], "r")
+            f = open(
+                constants["train_matches"] if is_train else constants["test_matches"],
+                "r",
+            )
             max_size = 0
             i = 0
             for line in f:
@@ -49,7 +57,9 @@ def pad_matches():
             return max_size
 
         max_size = find_maximum_line()
-        read_f = open(constants['train_matches'] if is_train else constants['test_matches'], "r")
+        read_f = open(
+            constants["train_matches"] if is_train else constants["test_matches"], "r"
+        )
         temp_file = "temp.txt"
         write_f = open(temp_file, "w")
         i = 0
@@ -59,7 +69,7 @@ def pad_matches():
             this_size = len(line)
             for _ in range(max_size - this_size):
                 line += ["-1"]
-            line = ','.join(line)
+            line = ",".join(line)
             line += "\n"
             write_f.write(line)
             if i % 1000 == 0:
@@ -67,7 +77,10 @@ def pad_matches():
             i += 1
         read_f.close()
         write_f.close()
-        shutil.move(temp_file, constants['train_matches'] if is_train else constants['test_matches'])
+        shutil.move(
+            temp_file,
+            constants["train_matches"] if is_train else constants["test_matches"],
+        )
 
     pad_matches_(True)
     pad_matches_(False)
@@ -79,7 +92,7 @@ def split_file(file_path, splits_num):
     for _ in read_file:
         lines += 1
     read_file.close()
-    lines_per_split = lines/splits_num
+    lines_per_split = lines / splits_num
     read_file = open(file_path, "r")
     written_lines = 0
     split_num = 1

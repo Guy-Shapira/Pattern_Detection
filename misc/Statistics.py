@@ -4,8 +4,13 @@ from base.PatternStructure import SeqOperator, PrimitiveEventStructure
 from stream.Stream import Stream
 
 
-def get_condition_selectivity(arg1: PrimitiveEventStructure, arg2: PrimitiveEventStructure, formula: Formula,
-                              stream: Stream, is_sequence: bool):
+def get_condition_selectivity(
+    arg1: PrimitiveEventStructure,
+    arg2: PrimitiveEventStructure,
+    formula: Formula,
+    stream: Stream,
+    is_sequence: bool,
+):
     """
     Calculates the selectivity of a given condition between two event types by evaluating it on a given stream.
     """
@@ -44,7 +49,9 @@ def get_occurrences_dict(pattern: Pattern, stream: Stream):
     given event stream.
     """
     ret = {}
-    types = {primitive_event.eventType for primitive_event in pattern.positive_structure.args}
+    types = {
+        primitive_event.eventType for primitive_event in pattern.positive_structure.args
+    }
     for event in stream:
         if event.eventType in types:
             if event.eventType in ret.keys():
@@ -64,9 +71,13 @@ def calculate_selectivity_matrix(pattern: Pattern, stream: Stream):
     selectivity_matrix = [[0.0 for _ in range(args_num)] for _ in range(args_num)]
     for i in range(args_num):
         for j in range(i + 1):
-            new_sel = get_condition_selectivity(args[i], args[j],
-                                                pattern.condition.get_formula_of({args[i].name, args[j].name}),
-                                                stream.duplicate(), pattern.positive_structure.get_top_operator() == SeqOperator)
+            new_sel = get_condition_selectivity(
+                args[i],
+                args[j],
+                pattern.condition.get_formula_of({args[i].name, args[j].name}),
+                stream.duplicate(),
+                pattern.positive_structure.get_top_operator() == SeqOperator,
+            )
             selectivity_matrix[i][j] = selectivity_matrix[j][i] = new_sel
 
     return selectivity_matrix
@@ -79,7 +90,9 @@ def get_arrival_rates(pattern: Pattern, stream: Stream):
     """
     time_interval = (stream.last().date - stream.first().date).total_seconds()
     counters = get_occurrences_dict(pattern, stream.duplicate())
-    return [counters[i.eventType] / time_interval for i in pattern.positive_structure.args]
+    return [
+        counters[i.eventType] / time_interval for i in pattern.positive_structure.args
+    ]
 
 
 class MissingStatisticsException(Exception):

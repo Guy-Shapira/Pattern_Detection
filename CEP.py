@@ -18,18 +18,25 @@ class CEP:
     to be evaluated) and a set of settings defining the evaluation mechanism to be used and the way the workload should
     be optimized and parallelized.
     """
-    def __init__(self, patterns: Pattern or List[Pattern], eval_mechanism_params: EvaluationMechanismParameters = None,
-                 parallel_execution_params: ParallelExecutionParameters = None):
+
+    def __init__(
+        self,
+        patterns: Pattern or List[Pattern],
+        eval_mechanism_params: EvaluationMechanismParameters = None,
+        parallel_execution_params: ParallelExecutionParameters = None,
+    ):
         """
         Constructor of the class.
         """
         if patterns is None or len(patterns) == 0:
             raise Exception("No patterns are provided")
-        self.__evaluation_manager = EvaluationManagerFactory.create_evaluation_manager(patterns,
-                                                                                       eval_mechanism_params,
-                                                                                       parallel_execution_params)
+        self.__evaluation_manager = EvaluationManagerFactory.create_evaluation_manager(
+            patterns, eval_mechanism_params, parallel_execution_params
+        )
 
-    def run(self, events: InputStream, matches: OutputStream, data_formatter: DataFormatter):
+    def run(
+        self, events: InputStream, matches: OutputStream, data_formatter: DataFormatter
+    ):
         """
         Applies the evaluation mechanism to detect the predefined patterns in a given stream of events.
         Returns the total time elapsed during evaluation.

@@ -11,6 +11,7 @@ class TreePlanBuilder(ABC):
     """
     The base class for the builders of tree-based plans.
     """
+
     def __init__(self, cost_model_type: TreeCostModels):
         self.__cost_model = TreeCostModelFactory.create_cost_model(cost_model_type)
 
@@ -33,7 +34,9 @@ class TreePlanBuilder(ABC):
         return self.__cost_model.get_plan_cost(pattern, plan)
 
     @staticmethod
-    def _instantiate_binary_node(pattern: Pattern, left_subtree: TreePlanNode, right_subtree: TreePlanNode):
+    def _instantiate_binary_node(
+        pattern: Pattern, left_subtree: TreePlanNode, right_subtree: TreePlanNode
+    ):
         """
         A helper method for the subclasses to instantiate tree plan nodes depending on the operator.
         """

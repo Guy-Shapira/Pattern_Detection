@@ -2,9 +2,21 @@ from functools import reduce
 from typing import List
 
 from base.Event import Event
-from base.Formula import Formula, EqFormula, IdentifierTerm, MinusTerm, AtomicTerm, AndFormula
-from base.PatternStructure import PatternStructure, CompositeStructure, SeqOperator, \
-    PrimitiveEventStructure, NegationOperator
+from base.Formula import (
+    Formula,
+    EqFormula,
+    IdentifierTerm,
+    MinusTerm,
+    AtomicTerm,
+    AndFormula,
+)
+from base.PatternStructure import (
+    PatternStructure,
+    CompositeStructure,
+    SeqOperator,
+    PrimitiveEventStructure,
+    NegationOperator,
+)
 from datetime import timedelta
 from misc.StatisticsTypes import StatisticsTypes
 from misc.ConsumptionPolicy import ConsumptionPolicy
@@ -22,8 +34,15 @@ class Pattern:
     A pattern can also carry statistics with it, in order to enable advanced
     tree construction mechanisms - this is hopefully a temporary hack.
     """
-    def __init__(self, pattern_structure: PatternStructure, pattern_matching_condition: Formula,
-                 time_window: timedelta, consumption_policy: ConsumptionPolicy = None, pattern_id: int = None):
+
+    def __init__(
+        self,
+        pattern_structure: PatternStructure,
+        pattern_matching_condition: Formula,
+        time_window: timedelta,
+        consumption_policy: ConsumptionPolicy = None,
+        pattern_id: int = None,
+    ):
         self.id = pattern_id
 
         self.full_structure = pattern_structure
@@ -38,7 +57,10 @@ class Pattern:
         self.consumption_policy = consumption_policy
 
         if consumption_policy is not None:
-            if consumption_policy.single_event_strategy is not None and consumption_policy.single_types is None:
+            if (
+                consumption_policy.single_event_strategy is not None
+                and consumption_policy.single_types is None
+            ):
                 # must be initialized to contain all event types in the pattern
                 consumption_policy.single_types = self.get_all_event_types()
             if consumption_policy.contiguous_names is not None:
@@ -72,7 +94,9 @@ class Pattern:
         if len(negative_structure.get_args()) == 0:
             # the given pattern is entirely positive
             return None
-        if len(negative_structure.get_args()) == len(self.positive_structure.get_args()):
+        if len(negative_structure.get_args()) == len(
+            self.positive_structure.get_args()
+        ):
             raise Exception("The pattern contains no positive events")
         # Remove all negative events from the positive structure
         # TODO: support nested operators
@@ -85,12 +109,18 @@ class Pattern:
         Returns the position of the given event name in the pattern.
         Note: nested patterns are not yet supported.
         """
-        found_positions = [index for (index, curr_structure) in enumerate(self.full_structure.get_args())
-                           if curr_structure.contains_event(event_name)]
+        found_positions = [
+            index
+            for (index, curr_structure) in enumerate(self.full_structure.get_args())
+            if curr_structure.contains_event(event_name)
+        ]
         if len(found_positions) == 0:
             raise Exception("Event name %s not found in pattern" % (event_name,))
         if len(found_positions) > 1:
-            raise Exception("Multiple appearances of the event name %s are found in the pattern" % (event_name,))
+            raise Exception(
+                "Multiple appearances of the event name %s are found in the pattern"
+                % (event_name,)
+            )
         return found_positions[0]
 
     def get_all_event_types(self):
@@ -105,7 +135,10 @@ class Pattern:
         """
         if isinstance(structure, PrimitiveEventStructure):
             return [structure.type]
-        return reduce(lambda x, y: x+y, [self.__get_all_event_types_aux(arg) for arg in structure.args])
+        return reduce(
+            lambda x, y: x + y,
+            [self.__get_all_event_types_aux(arg) for arg in structure.args],
+        )
 
     def __init_strict_formulas(self, pattern_structure: PatternStructure):
         """
@@ -121,14 +154,18 @@ class Pattern:
         for contiguous_sequence in self.consumption_policy.contiguous_names:
             for i in range(len(contiguous_sequence) - 1):
                 for j in range(len(args) - 1):
-                    if not isinstance(args[i], PrimitiveEventStructure) or \
-                            not isinstance(args[i + 1], PrimitiveEventStructure):
+                    if not isinstance(
+                        args[i], PrimitiveEventStructure
+                    ) or not isinstance(args[i + 1], PrimitiveEventStructure):
                         continue
                     if contiguous_sequence[i] != args[j].name:
                         continue
                     if contiguous_sequence[i + 1] != args[j + 1].name:
-                        raise Exception("Contiguity constraints contradict the pattern structure: " +
-                                        "%s must follow %s" % (contiguous_sequence[i], contiguous_sequence[i + 1]))
+                        raise Exception(
+                            "Contiguity constraints contradict the pattern structure: "
+                            + "%s must follow %s"
+                            % (contiguous_sequence[i], contiguous_sequence[i + 1])
+                        )
                     self.__add_contiguity_condition(args[i].name, args[i + 1].name)
 
     def __add_contiguity_condition(self, first_name: str, second_name: str):
@@ -139,8 +176,13 @@ class Pattern:
             self.condition,
             EqFormula(
                 IdentifierTerm(first_name, lambda x: x[Event.INDEX_ATTRIBUTE_NAME]),
-                MinusTerm(IdentifierTerm(second_name, lambda x: x[Event.INDEX_ATTRIBUTE_NAME]), AtomicTerm(1))
-            )
+                MinusTerm(
+                    IdentifierTerm(
+                        second_name, lambda x: x[Event.INDEX_ATTRIBUTE_NAME]
+                    ),
+                    AtomicTerm(1),
+                ),
+            ),
         )
 
     def extract_flat_sequences(self) -> List[List[str]]:
@@ -152,7 +194,9 @@ class Pattern:
         """
         return self.__extract_flat_sequences_aux(self.positive_structure)
 
-    def __extract_flat_sequences_aux(self, pattern_structure: PatternStructure) -> List[List[str]] or None:
+    def __extract_flat_sequences_aux(
+        self, pattern_structure: PatternStructure
+    ) -> List[List[str]] or None:
         """
         An auxiliary method for extracting flat sequences from the pattern.
         """
@@ -160,7 +204,13 @@ class Pattern:
             return None
         if pattern_structure.get_top_operator() == SeqOperator:
             # note the double brackets - we return a list composed of a single list representing this sequence
-            return [[arg.name for arg in pattern_structure.args if isinstance(arg, PrimitiveEventStructure)]]
+            return [
+                [
+                    arg.name
+                    for arg in pattern_structure.args
+                    if isinstance(arg, PrimitiveEventStructure)
+                ]
+            ]
         # the pattern is a composite pattern but not a flat sequence
         result = []
         for arg in pattern_structure.args:
@@ -170,6 +220,8 @@ class Pattern:
         return result
 
     def __repr__(self):
-        return "\nPattern structure: %s\nCondition: %s\nTime window: %s\n\n" % (self.structure,
-                                                                                self.condition,
-                                                                                self.window)
+        return "\nPattern structure: %s\nCondition: %s\nTime window: %s\n\n" % (
+            self.structure,
+            self.condition,
+            self.window,
+        )

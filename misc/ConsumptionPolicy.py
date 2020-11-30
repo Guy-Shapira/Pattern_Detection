@@ -14,19 +14,28 @@ class ConsumptionPolicy:
     - a list of event names whose appearance must freeze creation of new partial matches until they are either matched
     or expired.
     """
-    def __init__(self,
-                 primary_selection_strategy: SelectionStrategies = None,
-                 secondary_selection_strategy: SelectionStrategies = None,
-                 single: str or List[str] = None,
-                 contiguous: List[str] or List[List[str]] = None,
-                 freeze: str or List[str] = None):
+
+    def __init__(
+        self,
+        primary_selection_strategy: SelectionStrategies = None,
+        secondary_selection_strategy: SelectionStrategies = None,
+        single: str or List[str] = None,
+        contiguous: List[str] or List[List[str]] = None,
+        freeze: str or List[str] = None,
+    ):
         # initialize selection strategy
         self.single_event_strategy = None
         self.single_types = None
-        self.__init_selection_strategy(primary_selection_strategy, secondary_selection_strategy, single)
+        self.__init_selection_strategy(
+            primary_selection_strategy, secondary_selection_strategy, single
+        )
 
         # initialize contiguity constraints
-        if contiguous is not None and len(contiguous) > 0 and type(contiguous[0]) == str:
+        if (
+            contiguous is not None
+            and len(contiguous) > 0
+            and type(contiguous[0]) == str
+        ):
             # syntactic sugar - provide a list instead of a list containing one list
             self.contiguous_names = [contiguous]
         else:
@@ -39,10 +48,12 @@ class ConsumptionPolicy:
         else:
             self.freeze_names = freeze
 
-    def __init_selection_strategy(self,
-                                  primary_selection_strategy: SelectionStrategies,
-                                  secondary_selection_strategy: SelectionStrategies,
-                                  single: str or List[str]):
+    def __init_selection_strategy(
+        self,
+        primary_selection_strategy: SelectionStrategies,
+        secondary_selection_strategy: SelectionStrategies,
+        single: str or List[str],
+    ):
         """
         Initializes the selection strategy settings and performs basic sanity checks.
         """
@@ -53,7 +64,9 @@ class ConsumptionPolicy:
 
         if primary_selection_strategy != SelectionStrategies.MATCH_ANY:
             if single is not None or secondary_selection_strategy is not None:
-                raise Exception("Secondary selection strategy can only be applied when the primary is MATCH_ANY")
+                raise Exception(
+                    "Secondary selection strategy can only be applied when the primary is MATCH_ANY"
+                )
             self.single_event_strategy = primary_selection_strategy
             # to be initialized to hold all event types
             self.single_types = None
@@ -73,7 +86,9 @@ class ConsumptionPolicy:
         # syntactic sugar - provide a string instead of a list containing one string
         self.single_types = [single] if type(single) == str else single
 
-    def should_register_event_type_as_single(self, is_root: bool, event_type: str = None):
+    def should_register_event_type_as_single(
+        self, is_root: bool, event_type: str = None
+    ):
         """
         Returns True if the given parameters should activate the "single match only" policy on a tree node and
         False otherwise.

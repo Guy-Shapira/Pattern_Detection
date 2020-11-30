@@ -1,5 +1,9 @@
 from base.PatternMatch import PatternMatch
-from tree.PatternMatchStorage import SortedPatternMatchStorage, UnsortedPatternMatchStorage, EquationSides
+from tree.PatternMatchStorage import (
+    SortedPatternMatchStorage,
+    UnsortedPatternMatchStorage,
+    EquationSides,
+)
 from datetime import datetime, timedelta
 from base.Formula import RelopTypes
 
@@ -54,7 +58,9 @@ class TestUnsortedStorage:
             u_s.add(my_list[i])
 
         for i in range(len(my_list)):
-            assert u_s[i] == my_list[i], "UnsortedPatternMatchStorage: addition wasn't by order"
+            assert (
+                u_s[i] == my_list[i]
+            ), "UnsortedPatternMatchStorage: addition wasn't by order"
 
     def test_get(self):
         u_s = UnsortedPatternMatchStorage(0)
@@ -63,7 +69,9 @@ class TestUnsortedStorage:
         for i in range(len(my_list)):
             u_s.add(my_list[i])
 
-        assert u_s.get("nothing") == my_list, "UnsortedPatternMatchStorage: getting values didn't return everything"
+        assert (
+            u_s.get("nothing") == my_list
+        ), "UnsortedPatternMatchStorage: getting values didn't return everything"
 
     def test_clean_expired_partial_matches(self):
         u_s = UnsortedPatternMatchStorage(0)
@@ -72,7 +80,10 @@ class TestUnsortedStorage:
         u_s.add(self.pm3)
         u_s.add(self.pm4)
         u_s._clean_expired_partial_matches(self.dt + timedelta(15))
-        assert u_s.get("nothing") == [self.pm3, self.pm4], "UnsortedPatternMatchStorage clean_expired_partial_matches failed"
+        assert u_s.get("nothing") == [
+            self.pm3,
+            self.pm4,
+        ], "UnsortedPatternMatchStorage clean_expired_partial_matches failed"
 
     def run_tests(self):
         self.test_add()
@@ -90,10 +101,14 @@ class TestSortedStorage:
         self.dt = datetime(2020, 1, 1)
         self.pm_list = []
         for i in range(10):
-            self.pm_list.append(PatternMatch([Event(i, "type", self.dt + timedelta(i * 10))]))
+            self.pm_list.append(
+                PatternMatch([Event(i, "type", self.dt + timedelta(i * 10))])
+            )
 
     def test_add(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, "<", EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp, "<", EquationSides.left, True
+        )
         s.add(self.pm_list[1])
         s.add(self.pm_list[9])
         s.add(self.pm_list[0])
@@ -113,7 +128,9 @@ class TestSortedStorage:
         self.test_get_smaller_or_equal()
 
     def test_get_equal(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.Equal, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp, RelopTypes.Equal, EquationSides.left, True
+        )
         for i in range(10):
             s.add(self.pm_list[i])
         for i in reversed(range(10)):
@@ -121,12 +138,20 @@ class TestSortedStorage:
         # 0,0,10,10,...70,70,...,90,90
         result_pms = s.get(self.dt + timedelta(70))
         # 70,70
-        assert len(result_pms) == 2, "SortedPatternMatchStorage: get_equal returned incorrect number of pms"
-        assert result_pms[0] == self.pm_list[7], "SortedPatternMatchStorage: get_equal returned incorrect pm[0]"
-        assert result_pms[1] == self.pm_list[7], "SortedPatternMatchStorage: get_equal returned incorrect pm[1]"
+        assert (
+            len(result_pms) == 2
+        ), "SortedPatternMatchStorage: get_equal returned incorrect number of pms"
+        assert (
+            result_pms[0] == self.pm_list[7]
+        ), "SortedPatternMatchStorage: get_equal returned incorrect pm[0]"
+        assert (
+            result_pms[1] == self.pm_list[7]
+        ), "SortedPatternMatchStorage: get_equal returned incorrect pm[1]"
 
     def test_get_unequal(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.NotEqual, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp, RelopTypes.NotEqual, EquationSides.left, True
+        )
         for i in range(10):
             s.add(self.pm_list[i])
         for i in reversed(range(10)):
@@ -136,14 +161,24 @@ class TestSortedStorage:
         # 0,0,0,10,10,10,...90,90,90
         result_pms = s.get(self.dt)
         # expected 10,10,10,...,90,90,90
-        assert len(result_pms) == 27, "SortedPatternMatchStorage: get_unequal returned incorrect number of pms"
-        assert result_pms[0] == self.pm_list[1], "SortedPatternMatchStorage: get_unequal returned incorrect pm[0]"
-        assert result_pms[3] == self.pm_list[2], "SortedPatternMatchStorage: get_unequal returned incorrect pm[3]"
+        assert (
+            len(result_pms) == 27
+        ), "SortedPatternMatchStorage: get_unequal returned incorrect number of pms"
+        assert (
+            result_pms[0] == self.pm_list[1]
+        ), "SortedPatternMatchStorage: get_unequal returned incorrect pm[0]"
+        assert (
+            result_pms[3] == self.pm_list[2]
+        ), "SortedPatternMatchStorage: get_unequal returned incorrect pm[3]"
         for i in range(27):
-            assert result_pms[i] != self.pm_list[0], "SortedPatternMatchStorage: get_unequal returned incorrect pm[i]"
+            assert (
+                result_pms[i] != self.pm_list[0]
+            ), "SortedPatternMatchStorage: get_unequal returned incorrect pm[i]"
 
     def test_get_greater(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.Greater, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp, RelopTypes.Greater, EquationSides.left, True
+        )
         for i in range(10):
             s.add(self.pm_list[i])
         for i in reversed(range(7)):
@@ -153,14 +188,18 @@ class TestSortedStorage:
         # (0,0,0,1,1,1,2,2,2,3,3,3,4,4,4,5,5,6,6,7,8,9 )*10
         result_pms = s.get(self.dt + timedelta(30))
         # (4,4,4,5,5,6,6,7,8,9 )*10
-        assert len(result_pms) == 10, "SortedPatternMatchStorage: get_greater returned incorrect number of pms"
+        assert (
+            len(result_pms) == 10
+        ), "SortedPatternMatchStorage: get_greater returned incorrect number of pms"
         for i in range(10):
             assert (
                 result_pms[i].first_timestamp > self.pm_list[3].first_timestamp
             ), "SortedPatternMatchStorage: get_greater returned incorrect pm[i]"
 
     def test_get_smaller(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.Smaller, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp, RelopTypes.Smaller, EquationSides.left, True
+        )
         for i in range(1):
             s.add(self.pm_list[i])
         for i in reversed(range(8)):
@@ -170,14 +209,21 @@ class TestSortedStorage:
         # (0,0,0,1,1,2,2,3,3,4,5,6,7 )*10
         result_pms = s.get(self.dt + timedelta(50))
         # (0,0,0,1,1,2,2,3,3,4 )*10
-        assert len(result_pms) == 10, "SortedPatternMatchStorage: get_smaller returned incorrect number of pms"
+        assert (
+            len(result_pms) == 10
+        ), "SortedPatternMatchStorage: get_smaller returned incorrect number of pms"
         for i in range(10):
             assert (
                 result_pms[i].first_timestamp < self.pm_list[5].first_timestamp
             ), "SortedPatternMatchStorage: get_smaller returned incorrect pm[i]"
 
     def test_get_greater_or_equal(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.GreaterEqual, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp,
+            RelopTypes.GreaterEqual,
+            EquationSides.left,
+            True,
+        )
         for i in range(8):
             s.add(self.pm_list[i])
         for i in reversed(range(2)):
@@ -187,7 +233,9 @@ class TestSortedStorage:
         # (0,0,0,1,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,9 )*10
         result_pms = s.get(self.dt + timedelta(80))
         # 80,90
-        assert len(result_pms) == 2, "SortedPatternMatchStorage: get_greater_or_equal returned incorrect number of pms"
+        assert (
+            len(result_pms) == 2
+        ), "SortedPatternMatchStorage: get_greater_or_equal returned incorrect number of pms"
         assert (
             result_pms[0].first_timestamp == self.pm_list[8].first_timestamp
         ), "SortedPatternMatchStorage: get_greater_or_equal returned incorrect pm[0]"
@@ -196,7 +244,12 @@ class TestSortedStorage:
         ), "SortedPatternMatchStorage: get_greater_or_equal returned incorrect pm[1]"
 
     def test_get_smaller_or_equal(self):
-        s = SortedPatternMatchStorage(lambda x: x.first_timestamp, RelopTypes.SmallerEqual, EquationSides.left, True)
+        s = SortedPatternMatchStorage(
+            lambda x: x.first_timestamp,
+            RelopTypes.SmallerEqual,
+            EquationSides.left,
+            True,
+        )
         for j in range(7):
             for i in reversed(range(2)):
                 s.add(self.pm_list[i])
@@ -211,7 +264,9 @@ class TestSortedStorage:
         # 0 -> appears 12 times
         # 1 -> appears 12 times
         # 2 -> appears 5 times
-        assert len(result_pms) == 29, "SortedPatternMatchStorage: get_smaller_or_equal returned incorrect number of pms"
+        assert (
+            len(result_pms) == 29
+        ), "SortedPatternMatchStorage: get_smaller_or_equal returned incorrect number of pms"
         assert (
             result_pms[0].first_timestamp == self.pm_list[0].first_timestamp
         ), "SortedPatternMatchStorage: get_smaller_or_equal returned incorrect pm[0]"

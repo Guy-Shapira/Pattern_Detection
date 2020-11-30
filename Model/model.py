@@ -15,7 +15,15 @@ GAMMA = 0.9
 with torch.autograd.set_detect_anomaly(True):
 
     class ruleMiningClass(nn.Module):
-        def __init__(self, data_path, num_events, match_max_size=5, max_values=3000, window_size=20, max_count=3000):
+        def __init__(
+            self,
+            data_path,
+            num_events,
+            match_max_size=5,
+            max_values=3000,
+            window_size=20,
+            max_count=3000,
+        ):
             super().__init__()
             self.num_events = num_events
             self.match_max_size = match_max_size
@@ -35,7 +43,7 @@ with torch.autograd.set_detect_anomaly(True):
             self.linear1_action = nn.Linear(self.window_size * 9, self.hidden_size)
             self.linear2_action = nn.Linear(self.hidden_size, self.num_actions)
             self.critic = nn.Linear(self.hidden_size, 1)
-            #TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
+            # TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
             # needs to be smarter if follow is not possible
             self._create_training_dir(data_path)
             self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
@@ -60,10 +68,10 @@ with torch.autograd.set_detect_anomaly(True):
             sliding_window_data = None
             for i in range(0, len(data) - self.window_size):
                 if sliding_window_data is None:
-                    sliding_window_data = data[i: i + self.window_size]
+                    sliding_window_data = data[i : i + self.window_size]
                     sliding_window_data = sliding_window_data.unsqueeze(0)
                 else:
-                    to_add = data[i: i + self.window_size].unsqueeze(0)
+                    to_add = data[i : i + self.window_size].unsqueeze(0)
                     sliding_window_data = torch.cat((sliding_window_data, to_add))
             return sliding_window_data
 
@@ -85,12 +93,12 @@ with torch.autograd.set_detect_anomaly(True):
                 vec = vec / T
                 masked_vec = vec * mask.float()
                 max_vec = torch.max(masked_vec, dim=dim, keepdim=True)[0]
-                exps = torch.exp(masked_vec-max_vec)
+                exps = torch.exp(masked_vec - max_vec)
                 masked_exps = exps * mask.float()
                 masked_sums = masked_exps.sum(dim, keepdim=True)
-                zeros = (masked_sums == 0)
+                zeros = masked_sums == 0
                 masked_sums += zeros.float()
-                return masked_exps/masked_sums
+                return masked_exps / masked_sums
 
             x = F.relu(self.linear1_action(input))
 
@@ -103,11 +111,12 @@ with torch.autograd.set_detect_anomaly(True):
         def get_action(self, input, mask, T=1):
             probs, value = self.forward(Variable(input), mask, T=T)
             numpy_probs = probs.detach().numpy()
-            highest_prob_action = np.random.choice(self.num_actions, p=np.squeeze(numpy_probs))
+            highest_prob_action = np.random.choice(
+                self.num_actions, p=np.squeeze(numpy_probs)
+            )
             log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
             entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs))
             return highest_prob_action, log_prob, value, entropy
-
 
     def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term):
         Qvals = np.zeros_like(values)
@@ -136,7 +145,9 @@ with torch.autograd.set_detect_anomaly(True):
         mean_rewards = []
         for epoch in range(num_epochs):
             pbar_file = sys.stdout
-            with tqdm.tqdm(total=len(os.listdir("Model/training")[:150]), file=pbar_file) as pbar:
+            with tqdm.tqdm(
+                total=len(os.listdir("Model/training")[:150]), file=pbar_file
+            ) as pbar:
                 for i, data in enumerate(model.data[:150]):
                     if i % 10 == 0:
                         temper *= 1.25
@@ -152,12 +163,16 @@ with torch.autograd.set_detect_anomaly(True):
                     entropy_term = 0
                     mask = torch.tensor([1.0] * model.num_actions)
                     while not is_done:
-                        action, log_prob, value, entropy = model.get_event(data, mask.detach(), T=temper)
+                        action, log_prob, value, entropy = model.get_event(
+                            data, mask.detach(), T=temper
+                        )
                         count += 1
                         value = value.detach().numpy()[0]
                         entropy_term += entropy
                         if action == model.num_actions - 1:
-                            mask[-1] = mask[-1].clone() * 1.1 # to match the "step/state" - apply some change to how we work on the state over time
+                            mask[-1] = (
+                                mask[-1].clone() * 1.1
+                            )  # to match the "step/state" - apply some change to how we work on the state over time
                             values.append(value)
                             if len(actions) == 0:
                                 log_probs.append(log_prob)
@@ -168,8 +183,12 @@ with torch.autograd.set_detect_anomaly(True):
                                 break
 
                         else:
-                            mask[action] = mask[action].clone() * 0.8 # to match the "step/state" - apply some change to how we work on the state over time
-                            mask[-1] = mask[-1].clone() * 1.3 # to match the "step/state" - apply some change to how we work on the state over time
+                            mask[action] = (
+                                mask[action].clone() * 0.8
+                            )  # to match the "step/state" - apply some change to how we work on the state over time
+                            mask[-1] = (
+                                mask[-1].clone() * 1.3
+                            )  # to match the "step/state" - apply some change to how we work on the state over time
                             action, kind_of_action = mapping(model.num_events, action)
                             actions.append(action)
                             values.append(value)
@@ -182,11 +201,16 @@ with torch.autograd.set_detect_anomaly(True):
                             with open("Data/{}.txt".format(i), "r") as f:
                                 reward = int(f.read()) * 0.85
                                 reward += len(actions) * 0.1
-                                reward += len(np.where(np.array(action_types) != 'nop')[0]) * 1.5
+                                reward += (
+                                    len(np.where(np.array(action_types) != "nop")[0])
+                                    * 1.5
+                                )
                                 rewards.append(reward)
                             if reward > best_reward:
                                 best_reward = reward
-                                copyfile("pattern", "best_pattern/best_pattern{}".format(i))
+                                copyfile(
+                                    "pattern", "best_pattern/best_pattern{}".format(i)
+                                )
 
                         if count >= model.match_max_size:
                             is_done = True
@@ -198,13 +222,19 @@ with torch.autograd.set_detect_anomaly(True):
                     numsteps.append(len(actions))
                     avg_numsteps.append(np.mean(numsteps))
                     mean_rewards.append(np.mean(all_rewards))
-                    sys.stdout.write("episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(i, np.round(np.sum(rewards), decimals=3),  np.round(np.mean(all_rewards), decimals=3), len(actions)))
+                    sys.stdout.write(
+                        "episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(
+                            i,
+                            np.round(np.sum(rewards), decimals=3),
+                            np.round(np.mean(all_rewards), decimals=3),
+                            len(actions),
+                        )
+                    )
                 plt.plot(all_rewards)
-                plt.plot(mean_rewards, 'g')
+                plt.plot(mean_rewards, "g")
                 plt.plot(avg_numsteps)
-                plt.xlabel('Episode')
+                plt.xlabel("Episode")
                 plt.show()
-
 
     class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=6)
     train(class_inst)

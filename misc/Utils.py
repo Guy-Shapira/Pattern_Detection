@@ -15,7 +15,9 @@ from copy import deepcopy
 from stream.Stream import Stream
 
 
-def find_partial_match_by_timestamp(partial_matches: List[PatternMatch], timestamp: datetime):
+def find_partial_match_by_timestamp(
+    partial_matches: List[PatternMatch], timestamp: datetime
+):
     """
     Returns the partial match from the given list such that its timestamp is the closest to the given timestamp.
     The list is assumed to be sorted according to the earliest event timestamp.
@@ -74,11 +76,15 @@ def str_to_number(x: str):
         return x
 
 
-def get_order_by_occurrences(primitive_events: List[PrimitiveEventStructure], occurrences: dict):
+def get_order_by_occurrences(
+    primitive_events: List[PrimitiveEventStructure], occurrences: dict
+):
     """
     Sorts the given list according to the occurrences dictionary.
     """
-    temp_list = [(i, occurrences[primitive_events[i].type]) for i in range(len(primitive_events))]
+    temp_list = [
+        (i, occurrences[primitive_events[i].type]) for i in range(len(primitive_events))
+    ]
     temp_list = sorted(temp_list, key=lambda x: x[1])
     return [i[0] for i in temp_list]
 
@@ -126,7 +132,9 @@ def merge(arr1: list, arr2: list, key=lambda x: x):
     return ret
 
 
-def merge_according_to(arr1: list, arr2: list, actual1: list, actual2: list, key: callable = lambda x: x):
+def merge_according_to(
+    arr1: list, arr2: list, actual1: list, actual2: list, key: callable = lambda x: x
+):
     """
     Merge arrays actual1, actual2 according to the way a merge would be done on arr1 and arr2.
     Used in a partial match merge function - the reorders are given, and the partial matches is merged
@@ -179,7 +187,7 @@ def generate_matches(pattern: Pattern, stream: Stream):
     """
     args = pattern.positive_structure.args
     types = {primitive_event.event_type for primitive_event in args}
-    is_seq = (pattern.positive_structure.get_top_operator() == SeqOperator)
+    is_seq = pattern.positive_structure.get_top_operator() == SeqOperator
     events = {}
     matches = []
     for event in stream:
@@ -188,13 +196,23 @@ def generate_matches(pattern: Pattern, stream: Stream):
                 events[event.event_type].append(event)
             else:
                 events[event.event_type] = [event]
-    generate_matches_recursive(pattern, events, is_seq, [], datetime.max, datetime.min, matches, {})
+    generate_matches_recursive(
+        pattern, events, is_seq, [], datetime.max, datetime.min, matches, {}
+    )
     return matches
 
 
-def generate_matches_recursive(pattern: Pattern, events: dict, is_seq: bool, match: list, min_event_timestamp: datetime,
-                               max_event_timestamp: datetime,
-                               matches: list, binding: dict, loop: int = 0):
+def generate_matches_recursive(
+    pattern: Pattern,
+    events: dict,
+    is_seq: bool,
+    match: list,
+    min_event_timestamp: datetime,
+    max_event_timestamp: datetime,
+    matches: list,
+    binding: dict,
+    loop: int = 0,
+):
     pattern_length = len(pattern.positive_structure.args)
     if loop == pattern_length:
         if pattern.condition.eval(binding):
@@ -209,8 +227,17 @@ def generate_matches_recursive(pattern: Pattern, events: dict, is_seq: bool, mat
             if max_timestamp - min_timestamp <= pattern.window:
                 if not is_seq or len(match) == 0 or match[-1].date <= event.date:
                     match.append(event)
-                    generate_matches_recursive(pattern, events, is_seq, match, min_timestamp, max_timestamp, matches,
-                                               binding, loop + 1)
+                    generate_matches_recursive(
+                        pattern,
+                        events,
+                        is_seq,
+                        match,
+                        min_timestamp,
+                        max_timestamp,
+                        matches,
+                        binding,
+                        loop + 1,
+                    )
                     del match[-1]
         del binding[primitive_event.name]
 
@@ -230,7 +257,7 @@ def does_match_exist(matches: list, match: list):
                 return True
     return False
 
-  
+
 def recursive_powerset_generator(seq, max_size):
     """
     A recursive generator returning all subsets of the given item sequence of size limited to max_size.
@@ -243,8 +270,10 @@ def recursive_powerset_generator(seq, max_size):
         for item in recursive_powerset_generator(seq[1:], max_size):
             yield item
 
-            
-def get_index(container: Container, to_find_value: int, key: callable, return_first_index: bool):
+
+def get_index(
+    container: Container, to_find_value: int, key: callable, return_first_index: bool
+):
     """
     Returns the index (either the first o the last one depending on the corresponding parameter) of the to_find_value
     in a sequence that's sorted increasingly according to key.
@@ -285,11 +314,10 @@ def get_first_index(container: Container, to_find_value: int, key: callable):
     """
     return get_index(container, to_find_value, key, True)
 
-    
+
 def get_last_index(container: Container, to_find_value: int, key: callable):
     """
     Returns the last instance of the to_find_value in a sequence that's sorted increasingly according to key.
     However in case the to_find_value doesn't exist it returns the index of first value greater than it or -1.
     """
     return get_index(container, to_find_value, key, False)
-

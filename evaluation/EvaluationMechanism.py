@@ -8,7 +8,10 @@ class EvaluationMechanism(ABC):
     """
     Every evaluation mechanism must inherit from this class and implement the abstract methods.
     """
-    def eval(self, events: InputStream, matches: OutputStream, data_formatter: DataFormatter):
+
+    def eval(
+        self, events: InputStream, matches: OutputStream, data_formatter: DataFormatter
+    ):
         """
         Receives an input stream of events and outputs the detected pattern matches into a given output stream.
         """

@@ -12,13 +12,29 @@ from misc.Utils import generate_matches
 from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
 from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
+
 # from plugin.ToyExample.Toy import DataFormatter
 from plugin.ToyExample.MultivariantToy import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
-from base.Formula import GreaterThanFormula, SmallerThanFormula, SmallerThanEqFormula, GreaterThanEqFormula, MulTerm, \
-    EqFormula, IdentifierTerm, \
-    AtomicTerm, AndFormula, TrueFormula, NotEqFormula
-from base.PatternStructure import AndOperator, SeqOperator, PrimitiveEventStructure, NegationOperator
+from base.Formula import (
+    GreaterThanFormula,
+    SmallerThanFormula,
+    SmallerThanEqFormula,
+    GreaterThanEqFormula,
+    MulTerm,
+    EqFormula,
+    IdentifierTerm,
+    AtomicTerm,
+    AndFormula,
+    TrueFormula,
+    NotEqFormula,
+)
+from base.PatternStructure import (
+    AndOperator,
+    SeqOperator,
+    PrimitiveEventStructure,
+    NegationOperator,
+)
 from base.Pattern import Pattern
 from datetime import timedelta
 
@@ -27,12 +43,15 @@ absolutePath = str(currentPath.parent)
 sys.path.append(absolutePath)
 
 INCLUDE_BENCHMARKS = False
-DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = \
-    TreeBasedEvaluationMechanismParameters(TreePlanBuilderParameters(TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
-                                                                     TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL),
-                                           TreeStorageParameters(sort_storage=False,
-                                                                 clean_up_interval=10,
-                                                                 prioritize_sorting_by_timestamp=True))
+DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismParameters(
+    TreePlanBuilderParameters(
+        TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
+        TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL,
+    ),
+    TreeStorageParameters(
+        sort_storage=False, clean_up_interval=10, prioritize_sorting_by_timestamp=True
+    ),
+)
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
@@ -50,54 +69,74 @@ def get_next_formula(bindings, action_type, value, attribute):
     elif len(action_type.split("v")) == 2:
         action_type = action_type.split("v")[1]
         if action_type.startswith("<"):
-            return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                      AtomicTerm(value))
+            return SmallerThanFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
         elif action_type.startswith(">"):
-            return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                      AtomicTerm(value))
+            return GreaterThanFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
         elif action_type.startswith("="):
-            return EqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                             AtomicTerm(value))
+            return EqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
         elif action_type.startswith("not <"):
-            return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                        AtomicTerm(value))
+            return GreaterThanEqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
         elif action_type.startswith("not >"):
-            return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                        AtomicTerm(value))
+            return SmallerThanEqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
         else:  # action_type == "not ="
-            return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                AtomicTerm(value))
+            return NotEqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
 
     elif action_type == "<":
-        return SmallerThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                  IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return SmallerThanFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
     elif action_type == ">":
-        return GreaterThanFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                  IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return GreaterThanFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
     elif action_type == "=":
-        return EqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                         IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return EqFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
     elif action_type == "not <":
-        return GreaterThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                    IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return GreaterThanEqFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
     elif action_type == "not >":
-        return SmallerThanEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                                    IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return SmallerThanEqFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
     else:  # action_type == "not ="
-        return NotEqFormula(IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                            IdentifierTerm(bindings[1], lambda x: x[attribute]))
+        return NotEqFormula(
+            IdentifierTerm(bindings[0], lambda x: x[attribute]),
+            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        )
 
 
 def build_event_formula(bind, actions, comps, cols, is_last=False):
-    num_ops_remaining = sum([ i != 'nop' for i in actions])
-    num_comps_remaining = sum([ i != 'nop' for i in comps])
+    num_ops_remaining = sum([i != "nop" for i in actions])
+    num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
         return TrueFormula()
     if is_last:
         if num_comps_remaining == 0:
             return TrueFormula()
         elif comps[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], is_last=True)
+            return build_event_formula(
+                bind, actions[1:], comps[1:], cols[1:], is_last=True
+            )
         else:
             return get_next_formula(bind, actions[0], comps[0], cols[0])
 
@@ -110,8 +149,10 @@ def build_event_formula(bind, actions, comps, cols, is_last=False):
         if actions[0] == "nop":
             return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
         else:
-            return AndFormula(get_next_formula(bind, actions[0], comps[0], cols[0]),
-                              build_event_formula(bind, actions[1:], comps[1:], cols[1:]))
+            return AndFormula(
+                get_next_formula(bind, actions[0], comps[0], cols[0]),
+                build_event_formula(bind, actions[1:], comps[1:], cols[1:]),
+            )
 
 
 def build_formula(bindings, action_types, comp_values, cols):
@@ -124,10 +165,18 @@ def build_formula(bindings, action_types, comp_values, cols):
     :return: The formula of the pattern
     """
     if len(bindings) == 1:
-        return build_event_formula(bindings, action_types[0], comp_values[0], cols[0], is_last=True)
+        return build_event_formula(
+            bindings, action_types[0], comp_values[0], cols[0], is_last=True
+        )
     else:
-        event_forumla = build_event_formula(bindings, action_types[0], comp_values[0], cols[0])
-        return AndFormula(event_forumla, build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:]))
+        event_forumla = build_event_formula(
+            bindings, action_types[0], comp_values[0], cols[0]
+        )
+        return AndFormula(
+            event_forumla,
+            build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:]),
+        )
+
 
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
     """
@@ -144,24 +193,36 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     pattern = Pattern(
-        SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]),
+        SeqOperator(
+            [
+                PrimitiveEventStructure(event, chr(ord("a") + i))
+                for i, event in enumerate(actions)
+            ]
+        ),
         build_formula(bindings, action_types, comp_values, cols_rep),
-        timedelta(seconds=100))
+        timedelta(seconds=100),
+    )
     run_OpenCEP(str(index), [pattern])
     return pattern
 
 
-def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+def after_epoch_test(
+    pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS
+):
     cep = CEP([pattern], eval_mechanism_params)
-    events = FileInputStream(os.path.join(absolutePath, 'Data', 'test_data_stream.txt'))
-    base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
+    events = FileInputStream(os.path.join(absolutePath, "Data", "test_data_stream.txt"))
+    base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
     output_file_name = "%sMatches.txt" % "all"
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
 
-def run_OpenCEP(test_name, patterns, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
+def run_OpenCEP(
+    test_name,
+    patterns,
+    eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS,
+):
     """
     This method receives the given pattern (could be used for several patterns) and runs the CEP engine, writing to
     output file all matches found
@@ -171,8 +232,10 @@ def run_OpenCEP(test_name, patterns, eval_mechanism_params=DEFAULT_TESTING_EVALU
     :return: total run time of CEP engine, currently this value is unused
     """
     cep = CEP(patterns, eval_mechanism_params)
-    events = FileInputStream(os.path.join(absolutePath, 'Model', 'Training', '{}.txt'.format(test_name)))
-    base_matches_directory = os.path.join(absolutePath, 'Data', 'Matches')
+    events = FileInputStream(
+        os.path.join(absolutePath, "Model", "Training", "{}.txt".format(test_name))
+    )
+    base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
@@ -261,7 +324,7 @@ def prepare_pattern(forward_res, action_types,  index):
 
 
 def get_event_type(event):
-    return chr(ord('A') + event)
+    return chr(ord("A") + event)
 
 
 def mapping(num_events, value):
@@ -307,8 +370,8 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
 
     flat_actions = flatten(actions)
     flat_values = flatten(comp_values)
-    num_ops = sum([i != 'nop' for i in flat_actions])
-    num_cops = sum([i != 'nop' for i in flat_values])
+    num_ops = sum([i != "nop" for i in flat_actions])
+    num_cops = sum([i != "nop" for i in flat_values])
     num_unique_events = len(np.unique(events))
     num_unique_events_ops = len(np.unique(flat_actions))
     if num_events == 1:
@@ -323,8 +386,11 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
         else:
             return 0.1
 
-    return (num_unique_events_ops / max_ops) * 1.5 + (num_cops) * 0.25 + (num_unique_events / max_events) * 2
-
+    return (
+        (num_unique_events_ops / max_ops) * 1.5
+        + (num_cops) * 0.25
+        + (num_unique_events / max_events) * 2
+    )
 
 
 def new_mapping(event):

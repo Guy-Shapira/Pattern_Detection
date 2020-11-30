@@ -40,6 +40,7 @@ class PrimitiveEventStructure(PatternStructure):
     """
     Represents a simple primitive event, defined by a type and a name.
     """
+
     def __init__(self, event_type: str, name: str):
         self.type = event_type
         self.name = name
@@ -61,6 +62,7 @@ class UnaryStructure(PatternStructure, ABC):
     """
     Represents a pattern structure with an unary operator at the top level.
     """
+
     def __init__(self, arg):
         self.arg = arg
 
@@ -75,6 +77,7 @@ class CompositeStructure(PatternStructure, ABC):
     """
     Represents a pattern structure with a multinary operator at the top level.
     """
+
     def __init__(self, args: List[PatternStructure]):
         self.args = args
 
@@ -129,7 +132,9 @@ class SeqOperator(CompositeStructure):
 
 
 class KleeneClosureOperator(UnaryStructure):
-    def __init__(self, arg: PatternStructure, min_size=KC_MIN_SIZE, max_size=KC_MAX_SIZE):
+    def __init__(
+        self, arg: PatternStructure, min_size=KC_MIN_SIZE, max_size=KC_MAX_SIZE
+    ):
         super().__init__(arg)
         if min_size <= 0:
             raise Exception("Invalid Argument: KleeneClosure node min_size <= 0!")

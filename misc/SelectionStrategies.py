@@ -8,6 +8,7 @@ class SelectionStrategies(Enum):
     MATCH_SINGLE - each event is guaranteed to only be returned as a part of a single full match;
     MATCH_ANY - each event can participate in an arbitrary number of matches.
     """
-    MATCH_NEXT = 0,
-    MATCH_SINGLE = 1,
+
+    MATCH_NEXT = (0,)
+    MATCH_SINGLE = (1,)
     MATCH_ANY = 2

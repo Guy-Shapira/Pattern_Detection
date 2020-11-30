@@ -3,21 +3,18 @@ from datetime import datetime
 from base.DataFormatter import DataFormatter, EventTypeClassifier
 from misc.Utils import str_to_number
 
-COLUMN_KEYS = [
-    "Type",
-    "Value1",
-    "Value2",
-    "Count"]
+COLUMN_KEYS = ["Type", "Value1", "Value2", "Count"]
 
 TICKER_KEY = "Type"
 EVENT_TIMESTAMP_KEY = "Count"
-fmt = '%Y-%m-%d %H:%M:%S.%f'
+fmt = "%Y-%m-%d %H:%M:%S.%f"
 
 
 class ByTickerEventTypeClassifier(EventTypeClassifier):
     """
     This type classifier assigns a dedicated event type to each event in the log.
     """
+
     def get_event_type(self, event_payload: dict):
         """
         The type of a  event is equal to the ticker .
@@ -26,7 +23,9 @@ class ByTickerEventTypeClassifier(EventTypeClassifier):
 
 
 class DataFormatter(DataFormatter):
-    def __init__(self, event_type_classifier: EventTypeClassifier = ByTickerEventTypeClassifier()):
+    def __init__(
+        self, event_type_classifier: EventTypeClassifier = ByTickerEventTypeClassifier()
+    ):
         super().__init__(event_type_classifier)
 
     def parse_event(self, raw_data: str):
