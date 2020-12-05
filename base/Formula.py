@@ -459,6 +459,37 @@ class AndFormula(BinaryLogicOpFormula):  # AND: A < B AND C < D
             return (v1 and v2) or (v3 and v4)
 
 
+class OrFormula(BinaryLogicOpFormula):
+    """
+    This class uses CompositeCondition with True as the terminating result, which complies with OR operator logic.
+    OR stops at the first TRUE from the evaluation and return True.
+    """
+    def __init__(self, left_formula: Formula, right_formula: Formula):
+        super().__init__(left_formula, right_formula, lambda x, y: x or y)
+
+    def get_formula_of(self, names: set):
+        right_formula = self.right_formula.get_formula_of(names)
+        left_formula = self.left_formula.get_formula_of(names)
+        if left_formula is not None and right_formula is not None:
+            return OrFormula(left_formula, right_formula)
+        if left_formula:
+            return left_formula
+        if right_formula:
+            return right_formula
+        return None
+
+    def __repr__(self):
+        return " OR ".join(super().__repr__())
+
+    def __eq__(self, other):
+        if super().__eq__(other):
+            v1 = self.left_formula == other.left_formula
+            v2 = self.right_formula == other.right_formula
+            v3 = self.left_formula == other.right_formula
+            v4 = self.right_formula == other.left_formula
+            return (v1 and v2) or (v3 and v4)
+
+
 class TrueFormula(Formula):
     def eval(self, binding: dict = None):
         return True

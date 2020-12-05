@@ -3,7 +3,7 @@ from datetime import datetime
 from base.DataFormatter import DataFormatter, EventTypeClassifier
 from misc.Utils import str_to_number
 
-COLUMN_KEYS = ["Type", "Value1", "Value2", "Count"]
+COLUMN_KEYS = ["Type", "Value1", "Value2","Value3", "Count"]
 
 TICKER_KEY = "Type"
 EVENT_TIMESTAMP_KEY = "Count"

@@ -22,13 +22,10 @@ import datetime
 from difflib import SequenceMatcher
 
 
-# TODO:for now, to unit-test the system, I'm allways comparing with 5 (no use for value_layers), this MUST be
-# changed!!!
-
 GRAPH_VALUE = 10
 GAMMA = 0.90
 
-EMBDEDDING_TOTAL_SIZE = 12
+EMBDEDDING_TOTAL_SIZE = 15
 
 
 class ruleMiningClass(nn.Module):
@@ -38,10 +35,10 @@ class ruleMiningClass(nn.Module):
         data_path,
         num_events,
         match_max_size=8,
-        max_values=500,
+        max_values=2000,
         window_size=20,
         max_count=2000,
-        num_cols=2,
+        num_cols=3,
     ):
         super().__init__()
         self.num_events = num_events
@@ -78,21 +75,22 @@ class ruleMiningClass(nn.Module):
             [nn.Linear(self.hidden_size, self.max_values) for _ in range(self.num_cols)]
         )
         self._create_training_dir(data_path)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
 
         self.actions = [">", "<", "="]
-        self.cols = ["Value1", "Value2"]
+        self.cols = ["Value1", "Value2", "Value3"]
 
     def _create_data(self, data_path):
         date_time_obj = None
         data = None
         with open(data_path) as f:
             for line in f:
-                event, value1, value2, count = line.split(",")
+                event, value1, value2, value3, count = line.split(",")
                 event = ord(event) - ord("A")
                 event = self.embedding_events(torch.tensor(event))
                 value1 = self.embedding_values(torch.tensor(int(value1)))
                 value2 = self.embedding_values(torch.tensor(int(value2)))
+                value3 = self.embedding_values(torch.tensor(int(value3)))
                 count = count[:-1]
                 count = datetime.datetime.strptime(count, "%Y-%m-%d %H:%M:%S.%f")
                 if date_time_obj == None:
@@ -101,10 +99,10 @@ class ruleMiningClass(nn.Module):
                 count = count.total_seconds()
                 count = self.embedding_count(torch.tensor(int(count)))
                 if data is None:
-                    data = torch.cat((event, value1, value2, count), 0)
+                    data = torch.cat((event, value1, value2, value3, count), 0)
                     data = data.unsqueeze(0)
                 else:
-                    new_data = torch.cat((event, value1, value2, count), 0)
+                    new_data = torch.cat((event, value1, value2, value3, count), 0)
                     new_data = new_data.unsqueeze(0)
                     data = torch.cat((data, new_data), 0)
 
@@ -154,12 +152,12 @@ class ruleMiningClass(nn.Module):
     def get_event(self, input, mask=None, T=1):
         probs, value = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().numpy()
-        highest_prob_action = np.random.choice(
+        action = np.random.choice(
             self.num_events + 1, p=np.squeeze(numpy_probs)
         )
-        log_prob = torch.log(probs.squeeze(0)[highest_prob_action])
+        log_prob = torch.log(probs.squeeze(0)[action])
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7))
-        return highest_prob_action, log_prob, value, entropy
+        return action, log_prob, value, entropy
 
     def get_value(self, input):
         x = F.relu(self.linear_base(Variable(input)))
@@ -177,6 +175,7 @@ class ruleMiningClass(nn.Module):
         x = F.relu(self.action_layers[index](data))
         probs = F.softmax(x, dim=0)
         numpy_probs = probs.detach().numpy()
+
         highest_prob_action = np.random.choice(
             self.num_actions, p=np.squeeze(numpy_probs)
         )
@@ -252,7 +251,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     actor_loss = (-log_probs * advantage).mean()
     critic_loss = 0.5 * advantage.pow(2).mean()
     policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
-
+    print(policy_gradient)
     policy_network.zero_grad()
     policy_gradient.backward(retain_graph=True)
     policy_network.optimizer.step()
@@ -269,12 +268,13 @@ def train(model, num_epochs=5, test_epcohs=False):
     mean_rewards = []
     real, mean_real = [], []
     best_pattern = None
+    entropy_term = 0
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
         with tqdm.tqdm(
-            total=len(os.listdir("Model/training")[:500]), file=pbar_file
+            total=len(os.listdir("Model/training")[:100]), file=pbar_file
         ) as pbar:
-            for i, data in enumerate(model.data[:500]):
+            for i, data in enumerate(model.data[:100]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * model.match_max_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -292,7 +292,6 @@ def train(model, num_epochs=5, test_epcohs=False):
                 )
                 values = []
                 comp_values = []
-                entropy_term = 0
                 temper = 1
                 mask = torch.tensor([1.0] * (model.num_events + 1))
                 while not is_done:
@@ -335,7 +334,7 @@ def train(model, num_epochs=5, test_epcohs=False):
                             reward = int(f.read().count("\n") / (len(actions) + 1))
                             real_rewards.append(reward)
                             if reward == 0:
-                                rewards.append(-0.75)
+                                rewards.append(-1.5)
                                 break
                             # reward *= pattern_complexity(events, actions, comp_values, model.num_events, model.num_actions)
                             # TODO: need to design new fitness function
@@ -498,7 +497,7 @@ def predict_patterns(model):
 
 
 def main():
-    class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=5)
+    class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=6)
     train(class_inst)
     # predict_patterns(model=class_inst)
 

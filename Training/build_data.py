@@ -17,10 +17,10 @@ def build_data_stream():
             if rand_val < 3:
                 name = "A"
                 value1 = str(i)
-                value2 = str(random.randint(0, 15))
+                value2 = str(3)
                 for _ in range(3):
                     s_counter = str(counter)
-                    event = ",".join([name, value1, value2, s_counter]) + "\n"
+                    event = ",".join([name, value1, value2, value2, s_counter]) + "\n"
                     file.write(event)
                     counter += datetime.timedelta(seconds=1)
                     name = chr(ord(name) + 1)
@@ -29,7 +29,7 @@ def build_data_stream():
                 value1 = str(i)
                 value2 = str(random.randint(0, 15))
                 s_counter = str(counter)
-                event = ",".join([name, value1, value2, s_counter]) + "\n"
+                event = ",".join([name, value1, value2, value2, s_counter]) + "\n"
                 file.write(event)
                 counter += datetime.timedelta(seconds=1)
         file.close()

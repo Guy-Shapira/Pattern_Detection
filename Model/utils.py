@@ -28,6 +28,8 @@ from base.Formula import (
     AndFormula,
     TrueFormula,
     NotEqFormula,
+    OrFormula,
+
 )
 from base.PatternStructure import (
     AndOperator,
@@ -149,7 +151,7 @@ def build_event_formula(bind, actions, comps, cols, is_last=False):
         if actions[0] == "nop":
             return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
         else:
-            return AndFormula(
+            return OrFormula(
                 get_next_formula(bind, actions[0], comps[0], cols[0]),
                 build_event_formula(bind, actions[1:], comps[1:], cols[1:]),
             )
@@ -387,9 +389,9 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
             return 0.1
 
     return (
-        (num_unique_events_ops / max_ops) * 1.5
+        (num_unique_events_ops / max_ops) * 10.5
         + (num_cops) * 0.25
-        + (num_unique_events / max_events) * 2
+        + (num_unique_events / max_events) * 10
     )
 
 
