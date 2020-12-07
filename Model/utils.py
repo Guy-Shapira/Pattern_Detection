@@ -127,7 +127,7 @@ def get_next_formula(bindings, action_type, value, attribute):
         )
 
 
-def build_event_formula(bind, actions, comps, cols, is_last=False):
+def build_event_formula(bind, actions, comps, cols, conds, is_last=False):
     num_ops_remaining = sum([i != "nop" for i in actions])
     num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
@@ -137,50 +137,58 @@ def build_event_formula(bind, actions, comps, cols, is_last=False):
             return TrueFormula()
         elif comps[0] == "nop":
             return build_event_formula(
-                bind, actions[1:], comps[1:], cols[1:], is_last=True
+                bind, actions[1:], comps[1:], cols[1:], conds[1:], is_last=True
             )
         else:
             return get_next_formula(bind, actions[0], comps[0], cols[0])
 
     elif num_ops_remaining == 1:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
+            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:])
         else:
             return get_next_formula(bind, actions[0], comps[0], cols[0])
     else:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:], cols[1:])
+            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:])
         else:
-            return OrFormula(
-                get_next_formula(bind, actions[0], comps[0], cols[0]),
-                build_event_formula(bind, actions[1:], comps[1:], cols[1:]),
-            )
+            if conds[0] == "and":
+                return AndFormula(
+                    get_next_formula(bind, actions[0], comps[0], cols[0]),
+                    build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:]),
+                )
+            else:
+                return OrFormula(
+                    get_next_formula(bind, actions[0], comps[0], cols[0]),
+                    build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:]),
+                )
 
 
-def build_formula(bindings, action_types, comp_values, cols):
+
+def build_formula(bindings, action_types, comp_values, cols, conds):
     """
     Build the condition formula of the pattern
     :param bindings: All bindings (events as symbols)
     :param action_types: all action type (comparison with next, comparison with value, ect.)
     :param comp_values: all the values to compare with
     :param cols: system attributes
+    :param conds: and/or relations
     :return: The formula of the pattern
     """
     if len(bindings) == 1:
         return build_event_formula(
-            bindings, action_types[0], comp_values[0], cols[0], is_last=True
+            bindings, action_types[0], comp_values[0], cols[0], conds[0], is_last=True
         )
     else:
         event_forumla = build_event_formula(
-            bindings, action_types[0], comp_values[0], cols[0]
+            bindings, action_types[0], comp_values[0], cols[0], conds[0]
         )
         return AndFormula(
             event_forumla,
-            build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:]),
+            build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:], conds[1:]),
         )
 
 
-def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
+def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param actions: all actions the model suggested
@@ -188,6 +196,7 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
     :param index: episode number
     :param comp_values: all the values to compare with
     :param cols: system columns- attributes
+    :param conds: all and / or relations
     :return: the condition of the pattern created
     """
     cols_rep = []
@@ -201,7 +210,7 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols):
                 for i, event in enumerate(actions)
             ]
         ),
-        build_formula(bindings, action_types, comp_values, cols_rep),
+        build_formula(bindings, action_types, comp_values, cols_rep, conds),
         timedelta(seconds=100),
     )
     run_OpenCEP(str(index), [pattern])
@@ -376,8 +385,10 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
     num_cops = sum([i != "nop" for i in flat_values])
     num_unique_events = len(np.unique(events))
     num_unique_events_ops = len(np.unique(flat_actions))
+    if len (events) == 1:
+        return 1
     if num_events == 1:
-        return 0.85
+        return 0.75
     if num_ops == 0:
         return 0.5
     if num_unique_events == 1:
@@ -389,9 +400,9 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
             return 0.1
 
     return (
-        (num_unique_events_ops / max_ops) * 10.5
+        (num_unique_events_ops / max_ops) * 1.5
         + (num_cops) * 0.25
-        + (num_unique_events / max_events) * 10
+        + (num_unique_events / max_events) * 2
     )
 
 
@@ -413,12 +424,17 @@ def get_action_type(mini_action, total_actions, actions):
     :param actions:
     :return:
     """
+    if mini_action > total_actions:
+        cond = "and"
+        min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
+    else:
+        cond = "or"
     if mini_action == total_actions:
-        return "nop"
+        return "nop", cond
     else:
         mini = actions[mini_action % len(actions)]
         if mini_action >= len(actions) * 3:
             mini = "v" + mini + " value"
         elif mini_action >= len(actions) * 2:
             mini = "not " + mini
-    return mini
+    return mini, cond

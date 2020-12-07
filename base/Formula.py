@@ -479,7 +479,7 @@ class OrFormula(BinaryLogicOpFormula):
         return None
 
     def __repr__(self):
-        return " OR ".join(super().__repr__())
+        return "{} OR {}".format(self.left_formula, self.right_formula)
 
     def __eq__(self, other):
         if super().__eq__(other):
