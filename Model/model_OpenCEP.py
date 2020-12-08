@@ -307,8 +307,8 @@ def train(model, num_epochs=5, test_epcohs=False):
                     data[data_size + count] = model.embedding_desicions(
                         torch.tensor(action)
                     )
-                    # if i % 50 == 0:
-                    #     temper *= 1.05
+                    if i % 50 == 0:
+                        temper *= 1.05
                     count += 1
                     value = value.detach().numpy()[0]
                     values.append(value)
@@ -324,8 +324,8 @@ def train(model, num_epochs=5, test_epcohs=False):
                             rewards.append(rewards[-1])
                             break
                     else:
-                        mask[-1] = mask[-1].clone() * 1.3
-                        mask[action] = mask[action].clone() * 0.8
+                        # mask[-1] = mask[-1].clone() * 1.3
+                        # mask[action] = mask[action].clone() * 0.8
 
                         event = new_mapping(action)
                         events.append(event)
@@ -376,7 +376,7 @@ def train(model, num_epochs=5, test_epcohs=False):
                 _, Qval = model.forward(data, mask, T=temper)
                 Qval = Qval.detach().numpy()[0]
                 update_policy(model, rewards, log_probs, values, Qval, entropy_term)
-                update_policy1(model, rewards, log_probs)
+                # update_policy1(model, rewards, log_probs)
                 all_rewards.append(np.sum(rewards))
                 numsteps.append(len(actions))
                 avg_numsteps.append(np.mean(numsteps))
