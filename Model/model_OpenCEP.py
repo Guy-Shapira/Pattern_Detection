@@ -24,7 +24,6 @@ from difflib import SequenceMatcher
 
 GRAPH_VALUE = 10
 GAMMA = 0.99
-
 EMBDEDDING_TOTAL_SIZE = 15
 
 

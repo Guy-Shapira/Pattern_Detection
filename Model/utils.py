@@ -396,10 +396,15 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
             return -0.05
         else:
             return 0.25
+    elif num_unique_events < 3:
+        return (
+            (num_unique_events_ops / (max_ops * num_events)) * 1.5
+            + (num_unique_events / (max_events )) * 1.5
+        )
 
     return (
             (num_unique_events_ops / (max_ops * num_events)) * 3.5
-            + (num_unique_events / (max_events * num_events)) * 4
+            + (num_unique_events / (max_events )) * 4
     )
 
 
