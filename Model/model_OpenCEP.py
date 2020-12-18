@@ -24,7 +24,7 @@ from difflib import SequenceMatcher
 
 GRAPH_VALUE = 10
 GAMMA = 0.99
-EMBDEDDING_TOTAL_SIZE = 15
+EMBDEDDING_TOTAL_SIZE = 39
 
 
 class ruleMiningClass(nn.Module):
@@ -33,19 +33,21 @@ class ruleMiningClass(nn.Module):
         self,
         data_path,
         num_events,
-        match_max_size=10,
-        max_values=2000,
-        window_size=30,
+        match_max_size=5,
+        max_values=None,
+        normailze_values=None,
+        window_size=50,
         max_count=2000,
-        num_cols=3,
+        num_cols=12,
     ):
         super().__init__()
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
         self.window_size = window_size
+        self.normailze_values = normailze_values
         self.embedding_events = nn.Embedding(num_events + 1, 3)
-        self.embedding_values = nn.Embedding(max_values, 3)
+        self.embedding_values = [nn.Embedding(max_val, 3) for max_val in max_values]
         self.embedding_count = nn.Embedding(max_count, 3)
         self.data = self._create_data(data_path)
         self.data = self.data.view(len(self.data), -1)
@@ -53,9 +55,9 @@ class ruleMiningClass(nn.Module):
         self.num_cols = num_cols
         self.num_actions = 3 * 3 + 1 * 2  # [>|<|= * 3(reg, neg, value)| nop] (and  then or)
         # self.num_actions = self.value_options * self.num_events + 1
-        self.embedding_desicions = nn.Embedding(self.num_actions, 1)
+        self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
         self.linear_base = nn.Linear(
-            self.window_size * EMBDEDDING_TOTAL_SIZE + self.match_max_size,
+            self.window_size * EMBDEDDING_TOTAL_SIZE + self.match_max_size, #this should be changed to reflect mini actions
             self.hidden_size,
         )
         self.event_tagger = nn.Linear(self.hidden_size, self.num_events + 1)
@@ -71,36 +73,30 @@ class ruleMiningClass(nn.Module):
         # needs to be smarter if follow is not possible
 
         self.value_layer = nn.ModuleList(
-            [nn.Linear(self.hidden_size, self.max_values) for _ in range(self.num_cols)]
+            [nn.Linear(self.hidden_size, self.max_values[i]) for i in range(self.num_cols)]
         )
         self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
         self.actions = [">", "<", "="]
-        self.cols = ["Value1", "Value2", "Value3"]
+        # self.cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
+        self.cols  = ["x_s", "y_s", "z_s", "vx_s", "vy_s", "vz_s", "x_e", "y_e", "z_e", "vx_e", "vy_e", "vz_e"]
 
     def _create_data(self, data_path):
         date_time_obj = None
         data = None
         with open(data_path) as f:
             for line in f:
-                event, value1, value2, value3, count = line.split(",")
-                event = ord(event) - ord("A")
-                event = self.embedding_events(torch.tensor(event))
-                value1 = self.embedding_values(torch.tensor(int(value1)))
-                value2 = self.embedding_values(torch.tensor(int(value2)))
-                value3 = self.embedding_values(torch.tensor(int(value3)))
-                count = count[:-1]
-                count = datetime.datetime.strptime(count, "%Y-%m-%d %H:%M:%S.%f")
-                if date_time_obj == None:
-                    date_time_obj = count
-                count -= date_time_obj
-                count = count.total_seconds()
-                count = self.embedding_count(torch.tensor(int(count)))
+                values = line.split(",")
+                event = values[0]
+                event = self.embedding_events(torch.tensor(int(new_mapping(event, reverse=True))))
+                values = values[2:] # skip sid and ts
+                embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
+                embed_values.insert(0, event)
                 if data is None:
-                    data = torch.cat((event, value1, value2, value3, count), 0)
+                    data = torch.cat(tuple(embed_values), 0)
                     data = data.unsqueeze(0)
                 else:
-                    new_data = torch.cat((event, value1, value2, value3, count), 0)
+                    new_data = torch.cat(tuple(embed_values), 0)
                     new_data = new_data.unsqueeze(0)
                     data = torch.cat((data, new_data), 0)
 
@@ -186,7 +182,7 @@ class ruleMiningClass(nn.Module):
             value_probs = F.softmax(self.value_layer[index](data), dim=0)
             numpy_probs = value_probs.detach().numpy()
             highest_prob_value = np.random.choice(
-                self.max_values, p=np.squeeze(numpy_probs)
+                self.max_values[index], p=np.squeeze(numpy_probs)
             )
             log_prob += torch.log(value_probs.squeeze(0)[highest_prob_action])
         return highest_prob_action, highest_prob_value, log_prob
@@ -199,7 +195,7 @@ class ruleMiningClass(nn.Module):
         updated_data = self.linear_base(data)
         for i in range(self.num_cols):
             # TODO: save return values and stuff
-            action, value, log = self.single_col_mini_action(updated_data, i)
+            action, value, log = self.single_col_mini_action(updated_data, i) #this is weird, should update data after actions
             mini_action, cond = get_action_type(action, self.num_actions, self.actions)
             conds.append(cond)
             if len(mini_action.split("value")) > 1:
@@ -261,23 +257,16 @@ def train(model, num_epochs=5, test_epcohs=False):
     results = []
     total_best = -1
     all_rewards = []
-    max_len_best = -1
     numsteps = []
     avg_numsteps = []
     temper = 1
     mean_rewards = []
     real, mean_real = [], []
-    best_pattern = None
     entropy_term = 0
-    event_training = 1
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
-        with tqdm.tqdm(
-            total=len(os.listdir("Model/training")[:100]), file=pbar_file
-        ) as pbar:
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:100]), file=pbar_file) as pbar:
             for i, data in enumerate(model.data[epoch * 100 :(epoch + 1) * 100]):
-                if i % 5 == 0:
-                    event_training = 1 -event_training
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * model.match_max_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -323,14 +312,10 @@ def train(model, num_epochs=5, test_epcohs=False):
                             rewards.append(rewards[-1])
                             break
                     else:
-                        # mask[-1] = mask[-1].clone() * 1.3
-                        # mask[action] = mask[action].clone() * 0.8
-
                         event = new_mapping(action)
                         events.append(event)
                         mini_actions, log, comp_vals, conds = model.get_cols_mini_actions(data)
-                        # if event_training:
-                        #     log_prob = log
+                        #this is weird, should update data after actions
                         log_prob += log
                         log_probs.append(log_prob)
                         actions.append(mini_actions)
@@ -355,9 +340,7 @@ def train(model, num_epochs=5, test_epcohs=False):
                                 "Data/Matches/{}Matches.txt".format(i),
                                 "best_pattern/best_pattern{}".format(i),
                             )
-                            max_len_best = len(actions)
                             total_best = reward
-                            best_pattern = pattern
                         os.remove("Data/Matches/{}Matches.txt".format(i))
                         if reward > total_best:
                             with open("best.txt", "a+") as f:
@@ -509,7 +492,9 @@ def predict_patterns(model):
 
 
 def main():
-    class_inst = ruleMiningClass(data_path="Data/train_data_stream.txt", num_events=6)
+    class_inst = ruleMiningClass(data_path="Football/merge_x02", num_events=41,
+                                 max_values=[50000, 70000, 7000, 20000, 20000, 20000] * 2,
+                                 normailze_values=[7333, 32000, 2620, 9999, 9999, 9999] * 2)
     train(class_inst)
     # predict_patterns(model=class_inst)
 

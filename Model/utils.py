@@ -14,7 +14,7 @@ from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 # from plugin.ToyExample.Toy import DataFormatter
-from plugin.ToyExample.MultivariantToy import DataFormatter
+from plugin.Football.Football_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 from base.Formula import (
     GreaterThanFormula,
@@ -408,13 +408,20 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
     )
 
 
-def new_mapping(event):
+def new_mapping(event, reverse=False):
     """
     This should be replaced by real mapping!
     :param event: model's tagged event
     :return: the actual event
     """
-    return get_event_type(event)
+    values = [98,  69,  19,  67,  66,  75,  65,  40,  47,  64,  44,  59,  68,
+       106,  61,  49,  28,  99,  38,  58,  54, 100, 105,  73,  16,  97,
+        14,  53,  23,  24,  74,  88,  63,  13,  71,  57,  62,  52,   8,
+        10,   4]
+    if reverse:
+        return values.index(int(event))
+    else:
+        return values[event]
 
 
 def get_action_type(mini_action, total_actions, actions):
