@@ -244,7 +244,7 @@ def run_OpenCEP(
     """
     cep = CEP(patterns, eval_mechanism_params)
     events = FileInputStream(
-        os.path.join(absolutePath, "Model", "Training", "{}.txt".format(test_name))
+        os.path.join(absolutePath, "Model", "training", "{}.txt".format(test_name))
     )
     base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
     output_file_name = "%sMatches.txt" % test_name
@@ -257,81 +257,6 @@ def to_var(x):
     if torch.cuda.is_available():
         x = x.cuda()
     return Variable(x)
-
-
-"""
-Deprecated !
-def prepare_loss_clac(index, window_size, match_size):
-    if match_size == 0:
-        match_size = 1
-    print_list = []
-    print_list.append('\t' + '"train_stream_path": ' + '\"' + "Model/training/{}".format(index) + '.txt",\n')
-    print_list.append('\t' + '"test_stream_path": ' + '\"' + "Model/training/{}".format(index) + '.txt",\n')
-    print_list.append('\t' + '"train_log_file": ' + '\"' + "Training/training_data/train_log_file.txt" + '",\n')
-    print_list.append('\t' + '"train_matches": ' + '\"' + "Data/{}.txt".format(index) + '",\n')
-    print_list.append('\t' + '"test_matches": ' + '\"' + "Data/{}.txt".format(index) + '",\n')
-    print_list.append('\t' + '"test_size": ' + '\"' + str(window_size) + '",\n')
-    print_list.append('\t' + '"train_size": ' + '\"' + str(window_size) + '",\n')
-    print_list.append('\t' + '"pattern_window_size": ' + '\"' + str(window_size) + '",\n')
-    print_list.append('\t' + '"window_size": ' + '\"' + str(window_size) + '",\n')
-    print_list.append('\t' + '"match_size": ' + '\"' + str(match_size) + '",\n')
-    print_list.append('\t' + '"event_types": ' + '["A", "B", "C", "D", "E", "F", "G"]' + "\n")
-    with open("Data/constants.json", "w") as f:
-        f.write('{\n')
-        for l in print_list:
-            f.write(l)
-        f.write('}')
-"""
-
-"""
-Deprecated !
-def prepare_pattern(forward_res, action_types,  index):
-    action_types = np.array(action_types)
-    num_speical_actions = len(np.where(action_types != "nop")[0])
-    with open("pattern", "w") as f:
-        count = 0
-        assigments = []
-        event_types = []
-        for event in forward_res:
-            count += 1
-            event_types.append(event)
-            # TODO: change to 10 to real value calculated from the model's output
-            if len(assigments) == 0:
-                assigments.append("from Event#length(10) as a{},\n".format(count))
-            else:
-                assigments.append("Event#length(10) as a{},\n".format(count))
-
-        if count == 0:
-            f.write("select * from Event#length(1) as a1 \nwhere \na1.type = '&' \ndone")
-            return
-        assigments[-1] = assigments[-1].split(",")[0]
-        f.write("select *\n")
-        for assign in assigments:
-            f.write(assign)
-        f.write('\nwhere\n')
-        if count == 1:
-            f.write('a{}.type = \'{}\'\n'.format(1, event_types[0]))
-        else:
-            for i in range(0, count):
-                f.write('a{}.type = \'{}\' and\n'.format(i + 1, event_types[i]))
-            for i in range(0, count - 2):
-                f.write('a{}.count < a{}.count and \n'.format(i + 1, i + 2))
-            if len(action_types) == num_speical_actions:
-                f.write('a{}.count < a{}.count \n'.format(count - 1, count))
-            else:
-                f.write('a{}.count < a{}.count and \n'.format(count - 1, count))
-                count_curr_speical = 0
-                for i in range(0, count):
-                    if action_types[i] != 'nop':
-                        f.write('a{}.value {} a{}.value'.format(i, action_types[i], i + 1))
-                        count_curr_speical += 1
-                        if count_curr_speical == num_speical_actions:
-                            f.write(" \n")
-                            break
-                        else:
-                            f.write(" and \n")
-        f.write("done")
-"""
 
 
 def get_event_type(event):
@@ -364,7 +289,8 @@ def mapping(num_events, value):
     return value, kind_of_action
 
 
-def pattern_complexity(events, actions, comp_values, max_events, max_ops):
+
+def pattern_complexity(events, actions, comp_values, conds, max_events, max_ops, num_cols):
     """
     TODO: rebuild this function!
     This function is meant to determine the complexity of a pattern encouraging the model to predict complex
@@ -372,40 +298,53 @@ def pattern_complexity(events, actions, comp_values, max_events, max_ops):
     :param events: all actions predicted
     :param actions: all action types predicted (none, <, =, >, not on op, op with value)
     :param comp_values: values to be compared with, this param should be changed
+    :param cons: list of ANDs & ORs desicions
     :param max_events: maximum number of different events that can be predicted (used for normalization)
     :param max_ops: maximum number of different operations that can be predicted (used for normalization)
+    :param num_cols: the number of columns the modle works on
     :return: the complexity of the given pattern
     """
+    result = 1
+    ops_per_col = [0] * num_cols
+    for sublist in actions:
+        for i, op in enumerate(sublist):
+            if not op == 'nop':
+                ops_per_col[i] += 1
+
     num_events = len(events)
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
 
     flat_actions = flatten(actions)
     flat_values = flatten(comp_values)
+    flast_conds = flatten(conds)
     num_ops = sum([i != "nop" for i in flat_actions])
-    num_cops = sum([i != "nop" for i in flat_values])
+    num_comps = sum([i != "nop" for i in flat_values])
+    num_ands = sum([i == "and" for i in flast_conds])
+    num_ors = sum([i == "or" for i in flast_conds])
     num_unique_events = len(np.unique(events))
-    num_unique_events_ops = len(np.unique(flat_actions))
-    if num_events == 1:
-        return 0.9
-    if num_ops == 0:
-        return 0.5
-    if num_unique_events == 1:
-        if num_unique_events_ops == 1:
-            return 0.05
-        if num_events >= 4:
-            return -0.05
-        else:
-            return 0.25
-    elif num_unique_events < 3:
-        return (
-            (num_unique_events_ops / (max_ops * num_events)) * 1.5
-            + (num_unique_events / (max_events )) * 1.5
-        )
+    num_unique_events_vals = len(np.unique(flat_values))
+    num_actions = num_ops - num_comps
+    if num_ors > num_ands:
+        result += num_ands * 0.1
+        result -= num_ors * 0.1
+    result += num_actions * 0.1
+    result += max(ops_per_col) * 0.2
+    print(f"max_ops_col={max(ops_per_col)}")
+    if num_ands + num_ors > 8:
+        result -= 0.5
+    result *= num_unique_events 
+    result += num_unique_events_vals * 0.1
+    if num_events > 3 and num_unique_events == 1:
+        return -0.0001
+    else:
+        unique, counts = np.unique(events, return_counts=True)
+        if max(counts) > 5:
+            return -0.1
+        if max(counts) > 3:
+            return -0.001
 
-    return (
-            (num_unique_events_ops / (max_ops * num_events)) * 3.5
-            + (num_unique_events / (max_events )) * 4
-    )
+    print(result)
+    return result
 
 
 def new_mapping(event, reverse=False):
@@ -433,12 +372,13 @@ def get_action_type(mini_action, total_actions, actions):
     :param actions:
     :return:
     """
-    if mini_action > total_actions:
+    total_actions_real = (total_actions - 1) // 2
+    if mini_action > total_actions_real:
         cond = "and"
         min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
     else:
         cond = "or"
-    if mini_action == total_actions:
+    if mini_action == total_actions_real:
         return "nop", cond
     else:
         mini = actions[mini_action % len(actions)]
@@ -447,3 +387,26 @@ def get_action_type(mini_action, total_actions, actions):
         elif mini_action >= len(actions) * 2:
             mini = "not " + mini
     return mini, cond
+
+
+def create_pattern_str(events, actions, comp_vals, conds, cols):
+    str_pattern = ""
+    for event_index in range(len(events)):
+        event_char = chr(ord("a") + event_index)
+        comps = actions[event_index]
+        curr_conds = conds[event_index]
+        for (i, action) in enumerate(comps):
+            if action != 'nop':
+                if action.startswith("v"):
+                    action = action.split("v")[1]
+                    str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
+                    if i != len(comps) - 1:
+                        str_pattern += f" {curr_conds[i]} "
+                else:
+                    if event_index != len(events) - 1:
+                        str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord(event_char) + 1)}.{cols[i]}"
+                        if i != len(comps) - 1:
+                            str_pattern += f" {curr_conds[i]} "
+        if event_index != len(events) - 1:
+            str_pattern += " and "
+    return str_pattern

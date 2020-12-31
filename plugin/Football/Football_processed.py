@@ -3,11 +3,11 @@ from datetime import datetime, timedelta
 from base.DataFormatter import DataFormatter, EventTypeClassifier
 from misc.Utils import str_to_number
 
-COLUMN_KEYS = ["sid", "ts", "x_s", "y_s", "z_s", "vx_s", "vy_s", "vz_s", "x_e", "y_e", "z_e", "vx_e", "vy_e", "vz_e"]
+COLUMN_KEYS = ["sid", "ts", "x", "y", "z", "vx", "vy", "vz"]
 
 TICKER_KEY = "sid"
 EVENT_TIMESTAMP_KEY = "ts"
-START_OF_PLAY = 10711982604815750
+START_OF_PLAY = 10711885168794964
 
 
 class ByTickerEventTypeClassifier(EventTypeClassifier):
