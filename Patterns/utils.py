@@ -4,7 +4,6 @@ import numpy as np
 import os
 import pathlib
 import sys
-import pandas as pd
 from CEP import CEP
 from evaluation.EvaluationMechanismFactory import TreeBasedEvaluationMechanismParameters
 from stream.Stream import OutputStream
@@ -13,7 +12,6 @@ from misc.Utils import generate_matches
 from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
 from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
-
 
 # from plugin.ToyExample.Toy import DataFormatter
 from plugin.Football.Football_processed import DataFormatter
@@ -132,7 +130,6 @@ def get_next_formula(bindings, action_type, value, attribute):
 
 
 def build_event_formula(bind, actions, comps, cols, conds, is_last=False):
-
     num_ops_remaining = sum([i != "nop" for i in actions])
     num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
@@ -352,7 +349,7 @@ def pattern_complexity(events, actions, comp_values, conds, max_events, max_ops,
     return result
 
 
-def new_mapping(event, reverse=False):
+def new_mapping(event, reverse=False, random=False):
     """
     This should be replaced by real mapping!
     :param event: model's tagged event
@@ -363,6 +360,11 @@ def new_mapping(event, reverse=False):
         14,  53,  23,  24,  74,  88,  63,  13,  71,  57,  62,  52,   8,
         10,   4]
 
+    if random:
+        weights = [5 if i in [4, 8, 10] else 1 for i in values]
+        weights = np.array(weights)
+        weights = weights/sum(weights)
+        event = np.random.choice(len(values), p=weights)
     if reverse:
         return values.index(int(event))
     else:
@@ -422,69 +424,12 @@ def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
     pattern_copy = pattern.detach().numpy()
     pattern_copy = [str(i) for i in pattern_copy]
     pattern_copy = ','.join(pattern_copy)
-    if not os.path.isfile("Patterns/pattern.csv"):
+    if not os.path.isfile("Patterns/pattern4.csv"):
         modifier = "w"
     else:
         modifier = "a"
-    with open("Patterns/pattern.csv", modifier) as csv_file:
+    with open("Patterns/pattern4.csv", modifier) as csv_file:
         writer = csv.writer(csv_file)
         if modifier == "w":
             writer.writerow(["pattern", "rating", "events", "pattern_str"])
         writer.writerow([pattern_copy, user_rating, events, str_pattern])
-
-
-def set_values(comp_vals, cols, mini_actions, event, conds, file):
-    """
-    in future must use conds!
-    """
-    headers = ["event", "ts"] + cols
-    new_comp_vals = []
-    df = pd.read_csv(file, names=headers)
-    df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    df = df.loc[df['event'] == event]
-    for action, val, col in zip(mini_actions, comp_vals, df.columns[1:]):
-        if not val == "nop":
-            best = -1
-            max = 0
-            for candidate in df[col]:
-                match = match_condition(action, df, col, candidate)[0]
-                if match > max:
-                    max = match
-                    best = candidate
-            new_comp_vals.append(best)
-        else:
-            new_comp_vals.append("nop")
-
-
-
-    return new_comp_vals
-
-
-def match_condition(op, df, col, value):
-    if op == "<":
-        return df[df[col] < value].count()
-    elif op == ">":
-        return df[df[col] > value].count()
-
-    elif op == "=":
-        return df[df[col] == value].count()
-
-    elif op == "not <":
-        return df[~(df[col] < value)].count()
-
-    elif op == "not >":
-        return df[~(df[col] > value)].count()
-
-    else:  # op == "not ="
-        return df[~(df[col] == value)].count()
-
-
-def ball_patterns(events):
-    if len(events) <= 2:
-        return False
-    ball_events = [4 if event in [4,8,10] else event for event in events]
-    if len(np.unique(ball_events)) == 1 and events[0] in [4,8,10]:
-        return True
-    if ball_events.count(4) > int(len(events) / 2) + 1:
-        return True
-    return False
