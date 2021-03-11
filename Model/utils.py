@@ -3,6 +3,7 @@ from torch.autograd import Variable
 import numpy as np
 import os
 import pathlib
+import random
 import sys
 import pandas as pd
 from CEP import CEP
@@ -42,7 +43,7 @@ from base.PatternStructure import (
 from base.Pattern import Pattern
 from datetime import timedelta
 import csv
-
+import pickle
 
 currentPath = pathlib.Path(os.path.dirname(__file__))
 absolutePath = str(currentPath.parent)
@@ -454,10 +455,21 @@ def set_values(comp_vals, cols, mini_actions, event, conds, file):
             new_comp_vals.append(best)
         else:
             new_comp_vals.append("nop")
-
-
-
     return new_comp_vals
+
+
+
+def replace_values(comp_vals, selected_values):
+    count = 0
+    new_comp_vals = []
+    for val in comp_vals:
+        if not val == "nop":
+            new_comp_vals.append(selected_values[count])
+            count += 1
+        else:
+            new_comp_vals.append("nop")
+    return new_comp_vals
+
 
 
 def match_condition(op, df, col, value):
@@ -488,3 +500,92 @@ def ball_patterns(events):
     if ball_events.count(4) > int(len(events) / 2) + 1:
         return True
     return False
+
+
+def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals):
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals"]
+    NAMES = [name + ".txt" for name in NAMES]
+    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals]
+    for file_name, file_content in zip(NAMES, TO_WRITE):
+        with open(file_name, 'wb') as f:
+            pickle.dump(file_content, f)
+
+
+
+
+def set_values_bayesian(comp_vals, cols, mini_actions, event, conds, file, max_values, min_values):
+    headers = ["event", "ts"] + cols
+    return_dict = {}
+    df = pd.read_csv(file, names=headers)
+    df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    df = df.loc[df['event'] == event] # todo, try to remove
+    count = 0
+    for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
+        if not val == "nop":
+            return_dict.update({"x_" + str(count):
+                (max([df[col].min() - 1000, min_values[col_count] + 1]),
+                 min([df[col].max() + 1000, max_values[col_count] - 1]))
+                 })
+            count += 1
+
+    return return_dict
+
+
+def set_values_bayesian2(comp_vals, max_values, min_values):
+    return_dict = {}
+    count = 0
+    for col, val in enumerate(comp_vals):
+        if not val == "nop":
+            return_dict.update({"x_" + str(count): (min_values[col] + 1, max_values[col] - 1)})
+            count += 1
+
+    return return_dict
+
+
+
+# assumes index is in index.txt
+# actions in actions.txt
+# action_types int action_type.txt
+# comp_values int comp_values.txt
+# cols int cols.txt
+# conds int conds.txt
+def bayesian_function(**values):
+    # read comp_vals, create new_comp_vals using values
+
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals"]
+    NAMES = [name + ".txt" for name in NAMES]
+    TO_READ = [[] for _ in range(len(NAMES))]
+    for i, name in enumerate(NAMES):
+        with open(name, 'rb') as f:
+            TO_READ[i] = pickle.load(f)
+
+    actions = TO_READ[0]
+    action_types = TO_READ[1]
+    index = TO_READ[2]
+    comp_values = TO_READ[3]
+    cols = TO_READ[4]
+    conds = TO_READ[5]
+    new_comp_vals = TO_READ[6]
+    count = 0
+    to_return_comp_vals = []
+
+    values_keys = list(values.keys())
+    for val in new_comp_vals:
+        if not val == "nop":
+            to_return_comp_vals.append(values[values_keys[count]])
+            count += 1
+        else:
+            to_return_comp_vals.append("nop")
+
+    try_comp_vals = comp_values
+    try_comp_vals.append(to_return_comp_vals)
+
+    # calls run_OpenCEP
+    pattern = OpenCEP_pattern(
+        actions, action_types, index, try_comp_vals, cols, conds
+    )
+    # checks and return output
+
+    with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+        reward = int(f.read().count("\n") / (len(actions) + 1))
+        return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0

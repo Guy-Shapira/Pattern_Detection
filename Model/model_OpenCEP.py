@@ -13,9 +13,15 @@ from Model.utils import (
     store_patterns_and_rating_to_csv,
     set_values,
     ball_patterns,
+    bayesian_function,
+    set_values_bayesian,
+    set_values_bayesian2,
+    store_to_file,
+    replace_values,
 )
 import tqdm
 import pathlib
+from bayes_opt import BayesianOptimization
 
 import sys
 import time
@@ -87,8 +93,8 @@ class ruleMiningClass(nn.Module):
         # self.value_layer = nn.ModuleList(
         #     [nn.Linear(self.hidden_size, self.max_values[i]) for i in range(self.num_cols)]
         # )
-        # self._create_training_dir(data_path)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=0.0005)
+        self._create_training_dir(data_path)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         self.actions = [">", "<", "="]
         self.all_cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
         # self.cols  = ["x", "y", "z", "vx", "vy", "vz"]
@@ -96,7 +102,8 @@ class ruleMiningClass(nn.Module):
 
         self.knn = self._create_df()
         self.count = 0
-
+        self.min_values_bayes = [-i for i in normailze_values]
+        self.max_values_bayes = [i - j for i,j in zip(max_values, normailze_values)]
 
     def _create_df(self):
         df = pd.read_csv("Patterns/pattern4.csv")[["pattern", "rating"]]
@@ -179,7 +186,7 @@ class ruleMiningClass(nn.Module):
     def get_event(self, input, index=0, mask=None, T=1):
         probs, value = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().cpu().numpy()
-        if index % 50 == 0 and index != 0:
+        if index % 10 == 0 and index != 0:
             print(numpy_probs)
             time.sleep(0)
             # exit()
@@ -280,40 +287,30 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
     # Qvals = (Qvals - Qvals.mean()) / (
     #             Qvals.std(unbiased=False) + 1e-9)
-    Qval -= Qvals.mean()
-    print(f"Qvals {Qvals}")
-    if flag:
-        print(f"Qvals {Qvals}")
-        print(f"values {values}")
+    # Qval -= Qvals.mean()
+    # print(f"Qvals {Qvals}")
+    # if flag:
+    #     print(f"Qvals {Qvals}")
+    #     print(f"values {values}")
     advantage = Qvals - values
     # advantage = (advantage - advantage.mean())
-    print(f"advantage {advantage}")
+    # print(f"advantage {advantage}")
 
     actor_loss = (-log_probs * advantage).mean()
     critic_loss = 0.5 * advantage.pow(2).mean()
-    print(f"Critic: {critic_loss}, Actor {actor_loss}\n")
+    # print(f"Critic: {critic_loss}, Actor {actor_loss}\n")
     policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
     policy_gradient = policy_gradient.cuda()
-    print(policy_gradient)
+    # print(policy_gradient)
     policy_network.optimizer.zero_grad()
     policy_gradient.backward(retain_graph=True)
     policy_network.optimizer.step()
 
 
-def train(model, num_epochs=12, test_epcohs=False):
+def train(model, num_epochs=15, test_epcohs=False):
     torch.autograd.set_detect_anomaly(True)
-    # model = model.cuda()
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
     added_info_size_knn = (model.match_max_size + 1) * (3 + 1)
-    oniline_model = nn.Linear(
-                added_info_size, 1
-    )
-
-
-    online_loss = nn.MSELoss(reduction='mean')
-    user_inputs , online_patterns  = [] , []
-    total_user_inputs , total_online_patterns  = [] , []
-    online_optimizer = torch.optim.SGD(oniline_model.parameters(), lr=1e-9)
     results = []
     total_best = -1
     all_rewards = []
@@ -324,17 +321,21 @@ def train(model, num_epochs=12, test_epcohs=False):
     rating_plot = []
     all_ratings = []
     entropy_term = 0
-    switch_to_online = False
     for epoch in range(num_epochs):
         if epoch < 10:
-            temper = 1000
+            temper = 10
         else:
             temper = 5
 
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 500 :(epoch + 1) * 500]):
-                index = i + epoch * 500
+        with tqdm.tqdm(total=int(len(os.listdir("Model/training")) // (model.window_size / 5)) + 1, file=pbar_file) as pbar:
+            in_round_count = 0
+            # for i, data in enumerate(model.data[epoch * 500 :(epoch + 1) * 500]):
+            for index in range(epoch, len(model.data), int(model.window_size / 5)):
+                in_round_count += 1
+                # print(f" i: {i}")
+                data = model.data[index]
+                # index = i + epoch * 500
                 data_size = len(data)
                 old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
                 data2 = torch.cat((data, torch.tensor([PAD_VALUE] * added_info_size_knn).float()), dim=0)
@@ -366,15 +367,15 @@ def train(model, num_epochs=12, test_epcohs=False):
                     data = data.cuda()
                     mask_orig = mask.clone()
                     action, log_prob, value, entropy = model.get_event(
-                        data, index, mask, T=temper
+                        data, in_round_count, mask, T=temper
                     )
                     data = data.clone()
                     data[data_size + count * (model.num_cols + 1)] = model.embedding_desicions(
                         torch.tensor(action)
                     ).cuda()
                     data2[data_size + count * (model.num_cols + 1)] = data[data_size + count * (model.num_cols + 1)]
-                    # if i % 50 == 0 and epoch < 10:
-                    #     temper /= 1.45
+                    if in_round_count % 20 == 0 and epoch < 10:
+                        temper /= 1.35
                     count += 1
                     value = value.detach().cpu().numpy()[0]
                     values.append(value)
@@ -392,9 +393,9 @@ def train(model, num_epochs=12, test_epcohs=False):
                             break
                     else:
                         event = new_mapping(action)
-                        if 1:
-                            if event in [4,8,10]:
-                                mask[action] = mask[action].clone() * 0.1
+                        # if 1:
+                        #     if event in [4,8,10]:
+                        #         mask[action] = mask[action].clone() * 0.1
 
                         events.append(event)
                         mini_actions, log, comp_vals, conds, actions_vals, entropy = model.get_cols_mini_actions(data)
@@ -417,15 +418,43 @@ def train(model, num_epochs=12, test_epcohs=False):
                         sys.path.append(absolutePath)
                         file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(index))
 
-                        comp_vals = set_values(comp_vals, model.all_cols, mini_actions, event, conds, file)
-                        comp_values.append(comp_vals)
+                        # comp_vals = set_values(comp_vals, model.all_cols, mini_actions, event, conds, file)
                         all_conds.append(conds)
+
+
+                        if comp_vals.count("nop") != len(comp_vals):
+                            bayesian_dict = set_values_bayesian(comp_vals,
+                                model.all_cols, mini_actions, event,
+                                all_conds, file, model.max_values_bayes,
+                                 model.min_values_bayes
+                             )
+                            # bayesian_dict = set_values_bayesian2(comp_vals, model.max_values_bayes, model.min_values_bayes)
+                            store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals)
+                            b_optimizer = BayesianOptimization(
+                                f=bayesian_function,
+                                pbounds=bayesian_dict,
+                                random_state=42,
+                                verbose=2,
+                            )
+                            try:
+                                b_optimizer.maximize(
+                                    init_points=20,
+                                    n_iter=5,
+                                )
+
+                                selected_values = list(b_optimizer.max['params'].values())
+                            except Exception as e:
+                                print(bayesian_dict)
+                                selected_values = [max(model.normailze_values) for _ in range(len(bayesian_dict))]
+                            comp_vals = replace_values(comp_vals, selected_values)
+
+                        comp_values.append(comp_vals)
                         pattern = OpenCEP_pattern(
                             events, actions, index, comp_values, model.cols, all_conds
                         )
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols)
-                        if len(events) > 1:
-                            sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
+                        # if len(events) > 1:
+                        #     sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
 
                         eff_pattern = pattern.condition
                         with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
@@ -435,16 +464,9 @@ def train(model, num_epochs=12, test_epcohs=False):
                             rating = model.knn.predict(pattern_copy).item()
                             if ball_patterns(events):
                                 rewards.append(-5)
-                                # print("ball pattern!")
-                                time.sleep(0)
+                                print("ball pattern!")
+                                time.sleep(0.5)
                                 break
-                            # if len(events) >= 3:
-                            #     rating *= np.power(1.05, len(events) - 2)
-                            #     if len(np.unique(events)) > 2 and len(events) >= 4:
-                            #         rating *= 2
-                            #     elif len(np.unique(events)) == 1:
-                            #         rating *= 0.1
-                            # reward = rating * 10
                             ratings.append(rating)
                             if reward == 0:
                                 rewards.append(-1.5)
@@ -452,29 +474,11 @@ def train(model, num_epochs=12, test_epcohs=False):
                             if 1:
                                 if len(np.unique(events)) == 1 and len(events) >= 3:
                                     rating = -0.1
-                                reward *= rating
+                                reward *= rating * 2
                                 rewards.append(reward)
-                                sys.stdout.write(f"Knn out: {rating}\n")
+                                # sys.stdout.write(f"Knn out: {rating}\n")
 
 
-                        # if reward > best_reward:
-                        #     best_reward = reward
-                        #     copyfile(
-                        #         "Data/Matches/{}Matches.txt".format(index),
-                        #         "best_pattern/best_pattern{}".format(index),
-                        #     )
-                        #     total_best = reward
-                        # os.remove("Data/Matches/{}Matches.txt".format(index))
-                        # if reward > total_best:
-                        #     with open("best.txt", "a+") as f:
-                        #         bindings = [
-                        #             event + " as " + chr(ord("a") + k)
-                        #             for k, event in enumerate(actions)
-                        #         ]
-                        #         f.write("----\n")
-                        #         f.write(",".join(bindings) + "\n")
-                        #         f.write(str(eff_pattern) + "\n")
-                        #         f.write("----")
                     if count >= model.match_max_size:
                         is_done = True
 
@@ -482,7 +486,7 @@ def train(model, num_epochs=12, test_epcohs=False):
                 Qval = Qval.detach().cpu().numpy()[0]
                 del data
 
-                if i % 200 == 0:
+                if in_round_count % 200 == 0:
                     update_policy(model, rewards, log_probs, values, Qval, entropy_term, flag=True)
                 else:
                     update_policy(model, rewards, log_probs, values, Qval, entropy_term)
@@ -501,12 +505,12 @@ def train(model, num_epochs=12, test_epcohs=False):
                         sum([t != "nop" for sub in comp_values for t in sub]),
                     )
                 )
-                if i % 2 == 0:
+                if in_round_count % 2 == 0:
                     str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols)
                     sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
                 sys.stdout.write(
                     "episode: {}, total reward: {}, average_reward: {}, length: {}\n".format(
-                        i,
+                        in_round_count,
                         np.round(np.sum(rewards), decimals=3),
                         np.round(np.mean(all_rewards), decimals=3),
                         len(actions),
@@ -635,11 +639,37 @@ def predict_window(model, i, data):
             sys.path.append(absolutePath)
             file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(i))
 
-            comp_vals = set_values(comp_vals, model.all_cols, mini_actions, event, conds, file)
+            # comp_vals = set_values(comp_vals, model.all_cols, mini_actions, event, conds, file)
+            all_conds.append(conds)
 
+
+            if comp_vals.count("nop") != len(comp_vals):
+                # bayesian_dict = set_values_bayesian(comp_vals, model.all_cols, mini_actions, event, all_conds, file)
+                bayesian_dict = set_values_bayesian(comp_vals,
+                    model.all_cols, mini_actions, event,
+                    all_conds, file, model.max_values_bayes,
+                     model.min_values_bayes
+                 )
+                store_to_file(events, actions, i, comp_values, model.cols, all_conds, comp_vals)
+                b_optimizer = BayesianOptimization(
+                    f=bayesian_function,
+                    pbounds=bayesian_dict,
+                    random_state=1,
+                )
+                try:
+                    b_optimizer.maximize(
+                        init_points=10,
+                        n_iter=5,
+                    )
+
+                    selected_values = list(b_optimizer.max['params'].values())
+                except Exception as e:
+                    print(bayesian_dict)
+                    selected_values = [max(model.normailze_values) for _ in range(len(bayesian_dict))]
+                comp_vals = replace_values(comp_vals, selected_values)
 
             comp_values.append(comp_vals)
-            all_conds.append(conds)
+            # all_conds.append(conds)
             pattern = OpenCEP_pattern(
                 events, actions, i, comp_values, model.cols, all_conds
             )
