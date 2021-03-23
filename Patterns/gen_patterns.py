@@ -37,12 +37,12 @@ class genDataClass(nn.Module):
         self,
         data_path,
         num_events,
-        match_max_size=10,
+        match_max_size=8,
         max_values=None,
         normailze_values=None,
-        window_size=150,
+        window_size=350,
         max_count=2000,
-        num_cols=2,
+        num_cols=5,
     ):
         super().__init__()
         self.num_events = num_events
@@ -57,14 +57,15 @@ class genDataClass(nn.Module):
         self.data = self.data.view(len(self.data), -1)
         self.hidden_size = 2048
         self.num_cols = num_cols
-        self.num_actions = (3 * 3 * 2) + 1 # [>|<|= * 3(reg, neg, value)| (and then or)] | nop
+        self.num_actions = (3 * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         # self.num_actions = self.value_options * self.num_events + 1
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
         self.actions = [">", "<", "="]
         # self.cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
         # self.cols  = ["x", "y", "z", "vx", "vy", "vz"]
-        self.cols  = ["x", "y", "z"]
+        self.cols  = ["x", "y", "z", "vx", "vy"]
+        # self.cols  = ["x", "y", "z"]
 
 
 
@@ -103,7 +104,7 @@ class genDataClass(nn.Module):
 def genData(model, num_epochs=10):
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1) + 1 # need to remove + 1
-    added_info_size_knn = (model.match_max_size + 1) * (3 + 1) + 1
+    # added_info_size_knn = (model.match_max_size + 1) * (3 + 1) + 1
     results = []
     all_rewards = []
     numsteps = []
@@ -117,14 +118,15 @@ def genData(model, num_epochs=10):
             for i, data in enumerate(model.data[epoch * 500 :(epoch + 1) * 500]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
-                data2 = torch.cat((data, torch.tensor([0] * added_info_size_knn).float()), dim=0)
+                # data2 = torch.cat((data, torch.tensor([0] * added_info_size_knn).float()), dim=0)
                 data = torch.cat((data, old_desicions.float()), dim=0)
                 count = 0
                 best_reward = 0.0
                 pbar.update(n=1)
                 is_done = False
                 events = []
-                actions, action_types, real_rewards, all_conds, comp_values = (
+                actions, action_types, real_rewards, all_conds, comp_values, all_comps = (
+                    [],
                     [],
                     [],
                     [],
@@ -142,7 +144,7 @@ def genData(model, num_epochs=10):
                     data[data_size + count * (model.num_cols + 1)] = model.embedding_desicions(
                         torch.tensor(action)
                     )
-                    data2[data_size + count * (model.num_cols + 1)] = data[data_size + count * (model.num_cols + 1)]
+                    # data2[data_size + count * (model.num_cols + 1)] = data[data_size + count * (model.num_cols + 1)]
                     count += 1
                     if action == model.num_events:
                         if len(actions) == 0:
@@ -153,10 +155,13 @@ def genData(model, num_epochs=10):
                         mini_actions = []
                         actions_vals = []
                         conds = []
+                        comps = []
                         comp_vals = []
                         for col in range(len(model.cols)):
                             highest_prob_action = np.random.randint(model.num_actions)
-                            mini_action, cond = get_action_type(highest_prob_action, model.num_actions, model.actions)
+                            # mini_action, cond = get_action_type(highest_prob_action, model.num_actions, model.actions)
+                            mini_action, cond, comp_to = get_action_type(action, model.num_actions, model.actions, model.match_max_size)
+                            comps.append(comp_to)
                             if np.random.randint(5) == 0:
                                 mini_action ="nop"
 
@@ -176,7 +181,7 @@ def genData(model, num_epochs=10):
                             try:
                                 data[data_size + count * (model.num_cols + 1) + j + 1] = model.embedding_actions(
                                     torch.tensor(action_val))
-                                data2[data_size + count * (model.num_cols + 1) + j + 1] = data[data_size + count * (model.num_cols + 1) + j + 1]
+                                # data2[data_size + count * (model.num_cols + 1) + j + 1] = data[data_size + count * (model.num_cols + 1) + j + 1]
                             except Exception as e:
                                 print(f" len of arr {len(data)}")
                                 print(f"index {data_size + count * (model.num_cols + 1) + j + 1}")
@@ -185,9 +190,10 @@ def genData(model, num_epochs=10):
                                 exit()
                         actions.append(mini_actions)
                         all_conds.append(conds)
+                        all_comps.append(comps)
                         comp_values.append(comp_vals)
 
-                        str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols)
+                        str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                         if len(events) > 1:
                             pass
                             sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
@@ -200,8 +206,13 @@ def genData(model, num_epochs=10):
                             events_ball = [4 if event in [4,8,10] else event for event in events]
                             # print(events_ball)
                             unique, app_count = np.unique(events, return_counts=True)
+                            for i in range(len(unique)):
+                                if unique[i] != 4:
+                                    app_count[i] += 1
                             for k in range(len(unique)):
                                 user_reward += math.pow(0.5, k + 1) * app_count[k] * 1.5
+
+                            user_reward += 0.25 * sum([t != "nop" for sub in comp_values for t in sub])
 
                             flatten = lambda list_list: [item for sublist in list_list for item in sublist]
                             flat_conds = flatten(all_conds)
@@ -210,9 +221,15 @@ def genData(model, num_epochs=10):
                             # if flat_conds.count("or") > 5 :
                             #     user_reward -= 1.5
                             flat_actions = flatten(actions)
+                            not_count = sum([str.startswith("not") for str in flat_actions])
                             unique, app_count = np.unique(flat_actions, return_counts=True)
                             for k in range(len(unique)):
-                                user_reward += math.pow(0.1, k + 1) * app_count[k] * 2.5
+                                if unique[k].startswith("not"):
+                                    pass
+                                    # user_reward -= math.pow(0.2, k+1) * app_count[k] * 1.5
+                                else:
+                                    user_reward += math.pow(0.2, k + 1) * app_count[k] * 1.25
+                            user_reward -= 0.25 * not_count
                             ball_unique = np.unique(events_ball)
                             if len(events_ball) >= 3 and len(ball_unique) == 1:
                                 user_reward = 0
@@ -229,7 +246,7 @@ def genData(model, num_epochs=10):
 
 
 def main():
-    class_inst = genDataClass(data_path="Football/merge_x00", num_events=41,
+    class_inst = genDataClass(data_path="Football/xaa", num_events=41,
                                  max_values=[97000, 100000, 15000, 20000, 20000, 20000],
                                  normailze_values=[24000, 45000, 6000, 9999, 9999, 9999])
     genData(class_inst)

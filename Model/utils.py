@@ -62,15 +62,27 @@ DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismPara
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
-def get_next_formula(bindings, action_type, value, attribute):
+def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_target):
     """
     Creates a single condition in the formula of the pattern
     :param bindings: All bindings (events as symbols) remining
+    :param curr_len: the match number of events
+
     :param action_type: current action type (comparison with next, comparison with value, ect.)
     :param value: current the values to compare with
     :param attribute: system attribute to create a condition in
+    :param comp_target: what event to compate to
     :return: the next part of the formula
     """
+    # This is dumb, but for now:
+    if comp_target != "value":
+        if bindings[0] == chr(ord("a") + comp_target):
+            return TrueFormula() # cant compate to it self
+        elif comp_target >= curr_len:
+            return TrueFormula()
+        else:
+            bindings[1] = chr(ord("a") + comp_target)
+
     if action_type == "nop":
         return TrueFormula()
     elif len(action_type.split("v")) == 2:
@@ -132,69 +144,69 @@ def get_next_formula(bindings, action_type, value, attribute):
         )
 
 
-def build_event_formula(bind, actions, comps, cols, conds, is_last=False):
+def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is_last=False):
 
     num_ops_remaining = sum([i != "nop" for i in actions])
     num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
         return TrueFormula()
-    if is_last:
+    if is_last:  #TODO: remove this, for now need to change to if 0
         if num_comps_remaining == 0:
             return TrueFormula()
         elif comps[0] == "nop":
             return build_event_formula(
-                bind, actions[1:], comps[1:], cols[1:], conds[1:], is_last=True
+                bind, curr_len, actions[1:], comps[1:], cols[1:], conds[1:], targets[1:], is_last=True
             )
         else:
-            return get_next_formula(bind, actions[0], comps[0], cols[0])
+            return get_next_formula(bind, curr_len, actions[0], comps[0], cols[0], targets[0])
 
     elif num_ops_remaining == 1:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:])
+            return build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:])
         else:
-            return get_next_formula(bind, actions[0], comps[0], cols[0])
+            return get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0])
     else:
         if actions[0] == "nop":
-            return build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:])
+            return build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:])
         else:
             if conds[0] == "and":
                 return AndFormula(
-                    get_next_formula(bind, actions[0], comps[0], cols[0]),
-                    build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:]),
+                    get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0]),
+                    build_event_formula(bind, curr_len, actions[1:], comps[1:], cols[1:], conds[1:], targets[1:]),
                 )
             else:
                 return OrFormula(
-                    get_next_formula(bind, actions[0], comps[0], cols[0]),
-                    build_event_formula(bind, actions[1:], comps[1:], cols[1:], conds[1:]),
+                    get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0]),
+                    build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:]),
                 )
 
-
-
-def build_formula(bindings, action_types, comp_values, cols, conds):
+def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, all_comps):
     """
     Build the condition formula of the pattern
     :param bindings: All bindings (events as symbols)
+    :param curr_len: the match number of events
     :param action_types: all action type (comparison with next, comparison with value, ect.)
     :param comp_values: all the values to compare with
     :param cols: system attributes
     :param conds: and/or relations
+    :param all_comps: compare to what event in match
     :return: The formula of the pattern
     """
     if len(bindings) == 1:
         return build_event_formula(
-            bindings, action_types[0], comp_values[0], cols[0], conds[0], is_last=True
+            bindings, curr_len, action_types[0], comp_values[0], cols[0], conds[0], all_comps[0], is_last=True
         )
     else:
         event_forumla = build_event_formula(
-            bindings, action_types[0], comp_values[0], cols[0], conds[0]
+            bindings, curr_len, action_types[0], comp_values[0], cols[0], conds[0], all_comps[0]
         )
         return AndFormula(
             event_forumla,
-            build_formula(bindings[1:], action_types[1:], comp_values[1:], cols[1:], conds[1:]),
+            build_formula(bindings[1:], curr_len, action_types[1:], comp_values[1:], cols[1:], conds[1:], all_comps[1:]),
         )
 
 
-def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds):
+def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param actions: all actions the model suggested
@@ -203,6 +215,7 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds):
     :param comp_values: all the values to compare with
     :param cols: system columns- attributes
     :param conds: all and / or relations
+    :param all_comps: compare to what event in match
     :return: the condition of the pattern created
     """
     cols_rep = []
@@ -216,8 +229,8 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds):
                 for i, event in enumerate(actions)
             ]
         ),
-        build_formula(bindings, action_types, comp_values, cols_rep, conds),
-        timedelta(seconds=100),
+        build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
+        timedelta(seconds=7),
     )
     run_OpenCEP(str(index), [pattern])
     return pattern
@@ -370,35 +383,59 @@ def new_mapping(event, reverse=False):
         return values[event]
 
 
-def get_action_type(mini_action, total_actions, actions):
+def get_action_type(mini_action, total_actions, actions, match_max_size):
     """
     refactoring of kind_of_action function.
     gets a-list of all selected mini-actions, the number of all possible options and all operator options
     :param mini_action: list of mini-actions selected in current step, each mini action is in a different column
     :param total_actions:
     :param actions:
+    :param match_max_size: max len of match pattern
     :return:
     """
-    total_actions_real = (total_actions - 1) // 2
-    if mini_action > total_actions_real:
-        cond = "and"
-        min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
-    else:
+    not_flag = False
+    if mini_action == total_actions:
+        return "nop", "cond", ""
+    if mini_action >= 3 * (match_max_size + 1) * 2:
         cond = "or"
-    if mini_action == total_actions_real:
-        return "nop", cond
+        mini_action -= 3 * (match_max_size + 1) * 2
     else:
-        mini = actions[mini_action % len(actions)]
-        if mini_action >= len(actions) * 3:
-            mini = "v" + mini + " value"
-        elif mini_action >= len(actions) * 2:
-            mini = "not " + mini
-    return mini, cond
+        cond = "and"
+    if mini_action >= 3 * (match_max_size + 1):
+        not_flag = True
+        mini_action -= 3 * (match_max_size + 1)
+
+    action = actions[mini_action % len(actions)]
+    comp_to = int(mini_action / 3)
+    if comp_to == match_max_size:
+        comp_to = "value"
+        action = "v" + action + " value"
+    if not_flag:
+        action = "not " + action
+    return action, cond, comp_to
 
 
-def create_pattern_str(events, actions, comp_vals, conds, cols):
+    # total_actions_real = (total_actions - 1) // 2
+    # if mini_action > total_actions_real:
+    #     cond = "and"
+    #     min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
+    # else:
+    #     cond = "or"
+    # if mini_action == total_actions_real:
+    #     return "nop", cond
+    # else:
+    #     mini = actions[mini_action % len(actions)]
+    #     if mini_action >= len(actions) * 3:
+    #         mini = "v" + mini + " value"
+    #     elif mini_action >= len(actions) * 2:
+    #         mini = "not " + mini
+    # return mini, cond
+
+
+def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
     str_pattern = ""
     for event_index in range(len(events)):
+        and_flag = False
         event_char = chr(ord("a") + event_index)
         comps = actions[event_index]
         curr_conds = conds[event_index]
@@ -407,14 +444,18 @@ def create_pattern_str(events, actions, comp_vals, conds, cols):
                 if action.startswith("v"):
                     action = action.split("v")[1]
                     str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
+                    and_flag = True
                     if i != len(comps) - 1:
                         str_pattern += f" {curr_conds[i]} "
                 else:
                     if event_index != len(events) - 1:
-                        str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord(event_char) + 1)}.{cols[i]}"
-                        if i != len(comps) - 1:
-                            str_pattern += f" {curr_conds[i]} "
-        if event_index != len(events) - 1:
+                        if comp_target[event_index][i] != 'value' and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                            str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]}"
+                            and_flag = True
+
+                            if i != len(comps) - 1:
+                                str_pattern += f" {curr_conds[i]} "
+        if event_index != len(events) - 1 and and_flag:
             str_pattern += " and "
     return str_pattern
 
@@ -423,11 +464,11 @@ def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
     pattern_copy = pattern.detach().numpy()
     pattern_copy = [str(i) for i in pattern_copy]
     pattern_copy = ','.join(pattern_copy)
-    if not os.path.isfile("Patterns/pattern.csv"):
+    if not os.path.isfile("Patterns/pattern7.csv"):
         modifier = "w"
     else:
         modifier = "a"
-    with open("Patterns/pattern.csv", modifier) as csv_file:
+    with open("Patterns/pattern7.csv", modifier) as csv_file:
         writer = csv.writer(csv_file)
         if modifier == "w":
             writer.writerow(["pattern", "rating", "events", "pattern_str"])
@@ -441,7 +482,12 @@ def set_values(comp_vals, cols, mini_actions, event, conds, file):
     headers = ["event", "ts"] + cols
     new_comp_vals = []
     df = pd.read_csv(file, names=headers)
-    df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
+    df.drop(columns=["ts", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
     df = df.loc[df['event'] == event]
     for action, val, col in zip(mini_actions, comp_vals, df.columns[1:]):
         if not val == "nop":
@@ -502,10 +548,10 @@ def ball_patterns(events):
     return False
 
 
-def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals):
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals"]
+def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets):
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets"]
     NAMES = [name + ".txt" for name in NAMES]
-    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals]
+    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets]
     for file_name, file_content in zip(NAMES, TO_WRITE):
         with open(file_name, 'wb') as f:
             pickle.dump(file_content, f)
@@ -517,7 +563,8 @@ def set_values_bayesian(comp_vals, cols, mini_actions, event, conds, file, max_v
     headers = ["event", "ts"] + cols
     return_dict = {}
     df = pd.read_csv(file, names=headers)
-    df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
+    df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
     df = df.loc[df['event'] == event] # todo, try to remove
     count = 0
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
@@ -552,7 +599,7 @@ def set_values_bayesian2(comp_vals, max_values, min_values):
 def bayesian_function(**values):
     # read comp_vals, create new_comp_vals using values
 
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals"]
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets"]
     NAMES = [name + ".txt" for name in NAMES]
     TO_READ = [[] for _ in range(len(NAMES))]
     for i, name in enumerate(NAMES):
@@ -566,6 +613,7 @@ def bayesian_function(**values):
     cols = TO_READ[4]
     conds = TO_READ[5]
     new_comp_vals = TO_READ[6]
+    targets = TO_READ[7]
     count = 0
     to_return_comp_vals = []
 
@@ -582,10 +630,12 @@ def bayesian_function(**values):
 
     # calls run_OpenCEP
     pattern = OpenCEP_pattern(
-        actions, action_types, index, try_comp_vals, cols, conds
+        actions, action_types, index, try_comp_vals, cols, conds, targets
     )
     # checks and return output
 
     with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
         reward = int(f.read().count("\n") / (len(actions) + 1))
+        if reward > 55: #this is a const param that is attribute of model
+            reward = 1
         return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0

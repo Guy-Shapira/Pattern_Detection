@@ -371,35 +371,41 @@ def new_mapping(event, reverse=False, random=False):
         return values[event]
 
 
-def get_action_type(mini_action, total_actions, actions):
+def get_action_type(mini_action, total_actions, actions, match_max_size):
     """
     refactoring of kind_of_action function.
     gets a-list of all selected mini-actions, the number of all possible options and all operator options
     :param mini_action: list of mini-actions selected in current step, each mini action is in a different column
     :param total_actions:
     :param actions:
+    :param match_max_size: max len of match pattern
     :return:
     """
-    total_actions_real = (total_actions - 1) // 2
-    if mini_action > total_actions_real:
-        cond = "and"
-        min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
-    else:
+    not_flag = False
+    if mini_action == total_actions:
+        return "nop", "cond", ""
+    if mini_action >= 3 * (match_max_size + 1) * 2:
         cond = "or"
-    if mini_action == total_actions_real:
-        return "nop", cond
+        mini_action -= 3 * (match_max_size + 1) * 2
     else:
-        mini = actions[mini_action % len(actions)]
-        if mini_action >= len(actions) * 3:
-            mini = "v" + mini + " value"
-        elif mini_action >= len(actions) * 2:
-            mini = "not " + mini
-    return mini, cond
+        cond = "and"
+    if mini_action >= 3 * (match_max_size + 1):
+        not_flag = True
+        mini_action -= 3 * (match_max_size + 1)
 
+    action = actions[mini_action % len(actions)]
+    comp_to = int(mini_action / 3)
+    if comp_to == match_max_size:
+        comp_to = "value"
+        action = "v" + action + " value"
+    if not_flag:
+        action = "not " + action
+    return action, cond, comp_to
 
-def create_pattern_str(events, actions, comp_vals, conds, cols):
+def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
     str_pattern = ""
     for event_index in range(len(events)):
+        and_flag = False
         event_char = chr(ord("a") + event_index)
         comps = actions[event_index]
         curr_conds = conds[event_index]
@@ -408,27 +414,34 @@ def create_pattern_str(events, actions, comp_vals, conds, cols):
                 if action.startswith("v"):
                     action = action.split("v")[1]
                     str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
+                    and_flag = True
                     if i != len(comps) - 1:
                         str_pattern += f" {curr_conds[i]} "
                 else:
                     if event_index != len(events) - 1:
-                        str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord(event_char) + 1)}.{cols[i]}"
-                        if i != len(comps) - 1:
-                            str_pattern += f" {curr_conds[i]} "
-        if event_index != len(events) - 1:
+                        if comp_target[event_index][i] != 'value' and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                            str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]}"
+                            and_flag = True
+
+                            if i != len(comps) - 1:
+                                str_pattern += f" {curr_conds[i]} "
+        if event_index != len(events) - 1 and and_flag:
             str_pattern += " and "
+    if str_pattern.endswith("and "):
+        str_pattern = str_pattern[:-4]
     return str_pattern
+
 
 
 def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
     pattern_copy = pattern.detach().numpy()
     pattern_copy = [str(i) for i in pattern_copy]
     pattern_copy = ','.join(pattern_copy)
-    if not os.path.isfile("Patterns/pattern4.csv"):
+    if not os.path.isfile("Patterns/pattern11.csv"):
         modifier = "w"
     else:
         modifier = "a"
-    with open("Patterns/pattern4.csv", modifier) as csv_file:
+    with open("Patterns/pattern11.csv", modifier) as csv_file:
         writer = csv.writer(csv_file)
         if modifier == "w":
             writer.writerow(["pattern", "rating", "events", "pattern_str"])
