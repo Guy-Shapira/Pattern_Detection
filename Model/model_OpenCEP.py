@@ -40,6 +40,7 @@ GRAPH_VALUE = 50
 GAMMA = 0.99
 EMBDEDDING_TOTAL_SIZE = 21
 PAD_VALUE = -5.5
+device = "cuda:6"
 # EMBDEDDING_TOTAL_SIZE = 12
 
 
@@ -55,9 +56,10 @@ class ruleMiningClass(nn.Module):
         window_size=350,
         max_count=2000,
         num_cols=5,
-        max_fine_app=55
+        max_fine_app=55,
     ):
         super().__init__()
+        self.actions = [">", "<", "=", "+>", "->"]
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -70,7 +72,7 @@ class ruleMiningClass(nn.Module):
         self.data = self.data.view(len(self.data), -1)
         self.hidden_size = 2048
         self.num_cols = num_cols
-        self.num_actions = (3 * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
+        self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         # self.num_actions = self.value_options * self.num_events + 1
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
@@ -95,8 +97,7 @@ class ruleMiningClass(nn.Module):
         #     [nn.Linear(self.hidden_size, self.max_values[i]) for i in range(self.num_cols)]
         # )
         self._create_training_dir(data_path)
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
-        self.actions = [">", "<", "="]
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-6)
         self.all_cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
         # self.cols  = ["x", "y", "z", "vx", "vy", "vz"]
         self.cols  = ["x", "y", "z", "vx", "vy"]
@@ -315,7 +316,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     policy_network.optimizer.step()
 
 
-def train(model, num_epochs=15, test_epcohs=False, round_number=0):
+def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=100):
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
     added_info_size_knn = (model.match_max_size + 1) * (6 + 1)
@@ -332,9 +333,10 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=0):
     turn_flag = 0
     for epoch in range(num_epochs):
         if epoch < 5:
-            temper = 20
+            temper = temp_given
+            print(temper)
         else:
-            temper = 15
+            temper = 5
 
         pbar_file = sys.stdout
         with tqdm.tqdm(total=int(len(model.data) // (model.window_size / 9)) + 1, file=pbar_file) as pbar:
@@ -580,9 +582,9 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=0):
             ax2.scatter(locations, rating_groups, c="g")
             ax2.plot()
 
-            if not os.path.exists("rounds_graphs/" + str(round_number)):
-                os.mkdir("rounds_graphs/" + str(round_number) + "/")
-            plt.savefig("rounds_graphs/" + str(round_number) + "/" + str(len(real)))
+            # if not os.path.exists("temper_graphs/temp_" + str(temp_given)):
+            #     os.mkdir("temper_graphs/temp_" + str(temp_given) + "/")
+            plt.savefig(str(len(real)))
             plt.show()
 
 
@@ -758,15 +760,14 @@ def predict_patterns(model):
     print(events[best_index])
     print(pattern_strs[best_index])
 
-def main(rounds=0):
+def main():
     class_inst = ruleMiningClass(data_path="Football/xaa", num_events=41,
                                  max_values=[97000, 100000, 15000, 20000, 20000, 20000],
                                  normailze_values=[24000, 45000, 6000, 9999, 9999, 9999])
-    train(class_inst, round_number=rounds)
+    train(class_inst)
     predict_patterns(model=class_inst)
 
 
 if __name__ == "__main__":
     torch.set_num_threads(30)
-    for rounds in [100, 150]:
-        main(rounds)
+    main()

@@ -76,12 +76,20 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
     """
     # This is dumb, but for now:
     if comp_target != "value":
+        if comp_target == "":
+            print(f"Comp FUCK")
+            print(f"action {action_type}")
+            # print(f"Comp FUCK")
         if bindings[0] == chr(ord("a") + comp_target):
             return TrueFormula() # cant compate to it self
         elif comp_target >= curr_len:
             return TrueFormula()
         else:
-            bindings[1] = chr(ord("a") + comp_target)
+            try:
+                bindings[1] = chr(ord("a") + comp_target)
+            except Exception as e:
+                # end op list
+                return TrueFormula()
 
     if action_type == "nop":
         return TrueFormula()
@@ -106,6 +114,26 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
         elif action_type.startswith("not >"):
             return SmallerThanEqFormula(
                 IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            )
+        elif action_type.startswith("+"):
+            return GreaterThanEqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                IdentifierTerm(bindings[1], lambda x: x[attribute] + value),
+            )
+        elif action_type.startswith("-"):
+            return GreaterThanEqFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                IdentifierTerm(bindings[1], lambda x: x[attribute] - value),
+            )
+        elif action_type.startswith("not +"):
+            return SmallerThanFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                IdentifierTerm(bindings[1], lambda x: x[attribute] + value),
+            )
+        elif action_type.startswith("not -"):
+            return SmallerThanFormula(
+                IdentifierTerm(bindings[0], lambda x: x[attribute]),
+                IdentifierTerm(bindings[1], lambda x: x[attribute] - value),
             )
         else:  # action_type == "not ="
             return NotEqFormula(
@@ -396,22 +424,31 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     not_flag = False
     if mini_action == total_actions:
         return "nop", "cond", ""
-    if mini_action >= 3 * (match_max_size + 1) * 2:
+    if mini_action >= len(actions) * (match_max_size + 1) * 2:
         cond = "or"
-        mini_action -= 3 * (match_max_size + 1) * 2
+        mini_action -= len(actions) * (match_max_size + 1) * 2
     else:
         cond = "and"
-    if mini_action >= 3 * (match_max_size + 1):
+    if mini_action >= len(actions) * (match_max_size + 1):
         not_flag = True
-        mini_action -= 3 * (match_max_size + 1)
+        mini_action -= len(actions) * (match_max_size + 1)
 
     action = actions[mini_action % len(actions)]
-    comp_to = int(mini_action / 3)
-    if comp_to == match_max_size:
+    if not_flag and action != "nop":
+        action = "not " + action
+
+
+    comp_to = int(mini_action / len(actions))
+    if action in ["+>", "->"]:
+        if comp_to == match_max_size:
+            action = "nop"
+            comp_to = ""
+        else:
+            action = "v" + action + " value"
+    elif comp_to == match_max_size:
         comp_to = "value"
         action = "v" + action + " value"
-    if not_flag:
-        action = "not " + action
+
     return action, cond, comp_to
 
 
@@ -443,8 +480,14 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
             if action != 'nop':
                 if action.startswith("v"):
                     action = action.split("v")[1]
-                    str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
-                    and_flag = True
+                    if sum([i in action for i in ["+>", "->"]]):
+                        if event_index != len(events) - 1:
+                            if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                                str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                                and_flag = True
+                    else:
+                        str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
+                        and_flag = True
                     if i != len(comps) - 1:
                         str_pattern += f" {curr_conds[i]} "
                 else:
