@@ -59,8 +59,8 @@ class ruleMiningClass(nn.Module):
         max_fine_app=55,
     ):
         super().__init__()
-        # self.actions = [">", "<", "=", "+>", "->"]
-        self.actions = [">", "<", "="]
+        self.actions = [">", "<", "=", "+>", "->", "*="]
+        # self.actions = [">", "<", "="]
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -490,8 +490,8 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 Qval = Qval.detach().cpu().numpy()[0]
                 del data
 
-                # if epoch < 3:
-                #     send_rewards = rewards
+                if epoch < 2:
+                    send_rewards = rewards
                 if turn_flag == 0:
                     send_rewards = ratings
                 else:

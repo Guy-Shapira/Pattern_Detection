@@ -141,32 +141,45 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
             return SmallerThanEqCondition(
                 Variable(bindings[0], lambda x: x[attribute]), value
             )
-        # elif action_type.startswith("+"):
-        #     return BinaryCondition(
-        #         Variable(bindings[0], lambda x: x[attribute]),
-        #         Variable(bindings[1], lambda x: x[attribute] + value),
-        #         lambda x, y: x >= y + value,
-        #
-        #     )
-        # elif action_type.startswith("-"):
-        #     return BinaryCondition(
-        #         Variable(bindings[0], lambda x: x[attribute]),
-        #         Variable(bindings[1], lambda x: x[attribute] - value),
-        #         lambda x, y: x >= y + value,
-        #
-        #     )
-        # elif action_type.startswith("not +"):
-        #     return BinaryCondition(
-        #         Variable(bindings[0], lambda x: x[attribute]),
-        #         Variable(bindings[1], lambda x: x[attribute]),
-        #         lambda x, y: x < y + value,
-        #     )
-        # elif action_type.startswith("not -"):
-        #     return BinaryCondition(
-        #         Variable(bindings[0], lambda x: x[attribute]),
-        #         Variable(bindings[1], lambda x: x[attribute]),
-        #         lambda x, y: x < y - value,
-        #     )
+        elif action_type.startswith("+"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] + value),
+                lambda x, y: x >= y + value,
+
+            )
+        elif action_type.startswith("-"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] - value),
+                lambda x, y: x >= y + value,
+
+            )
+        elif action_type.startswith("not +"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: x < y + value,
+            )
+        elif action_type.startswith("not -"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: x < y - value,
+            )
+        elif action_type.startswith("*="):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] + value),
+                lambda x, y: int(x) == int(y * value),
+
+            )
+        elif action_type.startswith("not *"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: int(x) != int(y * value),
+            )
         else:  # action_type == "not ="
             return NotEqCondition(
                 Variable(bindings[0], lambda x: x[attribute]), value
@@ -244,7 +257,7 @@ def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is
                     event_forumla,
                 )
             else:
-                return AndCondition(
+                return OrCondition(
                     next_formula,
                     event_forumla,
                 )
@@ -296,15 +309,16 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     # print(build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps))
-    # print(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)][0]))
+    test1 = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
+    # print(f"A: {test1}")
+    # print(f"B: {test1[0]}")
+    # print(*test1)
+    # print(SeqOperator(*test1))
+    # print(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]))
+    # input("next")
 
     pattern = Pattern(
-        SeqOperator(
-            [
-                PrimitiveEventStructure(event, chr(ord("a") + i))
-                for i, event in enumerate(actions)
-            ][0]
-        ),
+        SeqOperator(*test1),
         build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
         timedelta(seconds=7),
     )
@@ -472,20 +486,21 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     not_flag = False
     if mini_action == total_actions:
         return "nop", "cond", ""
-    if mini_action >= 3 * (match_max_size + 1) * 2:
+    if mini_action >= len(actions) * (match_max_size + 1) * 2:
         cond = "or"
-        mini_action -= 3 * (match_max_size + 1) * 2
+        mini_action -= len(actions) * (match_max_size + 1) * 2
     else:
         cond = "and"
-    if mini_action >= 3 * (match_max_size + 1):
+    if mini_action >= len(actions) * (match_max_size + 1):
         not_flag = True
-        mini_action -= 3 * (match_max_size + 1)
+        mini_action -= len(actions) * (match_max_size + 1)
 
     action = actions[mini_action % len(actions)]
+    if not_flag and action != "nop":
+        action = "not " + action
 
-
-    comp_to = int(mini_action /3 )
-    if sum([i in action for i in ["+>", "->"]]):
+    comp_to = int(mini_action / len(actions) )
+    if sum([i in action for i in ["+>", "->", "*="]]):
         if comp_to == match_max_size:
             action = "nop"
             comp_to = ""
@@ -494,8 +509,7 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     elif comp_to == match_max_size:
         comp_to = "value"
         action = "v" + action + " value"
-    if not_flag and action != "nop":
-        action = "not " + action
+
 
     return action, cond, comp_to
 
@@ -541,6 +555,22 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
                                 print(f" event_char {event_char}")
                                 print(f" event_index {event_index}")
                                 exit()
+                    elif "*=" in action:
+                        if event_index != len(events) - 1:
+                            try:
+                                if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                                    if "not" in action:
+                                        str_pattern += f"{event_char}.{cols[i]} = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} * {comp_vals[event_index][i]}"
+                                    else:
+                                        str_pattern += f"{event_char}.{cols[i]} not = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                                    and_flag = True
+                            except Exception as e:
+                                print(e)
+                                print(action)
+                                print(f" comp target {comp_target[event_index][i]}")
+                                print(f" event_char {event_char}")
+                                print(f" event_index {event_index}")
+                                exit()
                     else:
                         str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
                         and_flag = True
@@ -554,8 +584,9 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
 
                             if i != len(comps) - 1:
                                 str_pattern += f" {curr_conds[i]} "
-        if event_index != len(events) - 1 and and_flag:
-            str_pattern += " and "
+            if event_index != len(events) - 1 and and_flag:
+                str_pattern += " and "
+                and_flag = False
     return str_pattern
 
 
