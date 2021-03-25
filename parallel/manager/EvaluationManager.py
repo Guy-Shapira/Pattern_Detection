@@ -13,13 +13,7 @@ class EvaluationManager(ABC):
     """
     The root class of the evaluation manager hierarchy.
     """
-
-    def eval(
-        self,
-        event_stream: InputStream,
-        pattern_matches: OutputStream,
-        data_formatter: DataFormatter,
-    ):
+    def eval(self, event_stream: InputStream, pattern_matches: OutputStream, data_formatter: DataFormatter):
         """
         Utilizes a (possibly parallelized) evaluation mechanism to extract pattern matches from the given input stream
         into a given output stream.

@@ -59,7 +59,8 @@ class ruleMiningClass(nn.Module):
         max_fine_app=55,
     ):
         super().__init__()
-        self.actions = [">", "<", "=", "+>", "->"]
+        # self.actions = [">", "<", "=", "+>", "->"]
+        self.actions = [">", "<", "="]
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -345,12 +346,6 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 in_round_count += 1
                 if in_round_count % 50 == 0:
                     turn_flag = 1 - turn_flag
-                    if turn_flag:
-                        print(f"\n\n---Rewards Max---\n\n")
-                        # time.sleep(0.5)
-                    else:
-                        print(f"\n\n---Ratings Max---\n\n")
-                        # time.sleep(0.5)
                 data = model.data[index]
                 data_size = len(data)
                 old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
@@ -495,10 +490,12 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 Qval = Qval.detach().cpu().numpy()[0]
                 del data
 
-                if turn_flag:
-                    send_rewards = real_rewards
-                else:
+                # if epoch < 3:
+                #     send_rewards = rewards
+                if turn_flag == 0:
                     send_rewards = ratings
+                else:
+                    send_rewards = real_rewards
                 if in_round_count % 200 == 0:
                     update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, flag=True)
                 else:
