@@ -3,7 +3,7 @@ from misc import DefaultConfig
 from misc.Utils import get_first_index, get_last_index
 from datetime import datetime
 from misc.Utils import find_partial_match_by_timestamp
-from base.Formula import RelopTypes, EquationSides
+from condition.Condition import RelopTypes, EquationSides
 
 
 class PatternMatchStorage:
@@ -14,13 +14,7 @@ class PatternMatchStorage:
     containing a single object, multiple objects, or even the entire stored content). This behavior contradicts the
     "regular" container behavior fetching a single value corresponding to this key.
     """
-
-    def __init__(
-        self,
-        get_match_key: callable,
-        sorted_by_arrival_order: bool,
-        clean_up_interval: int,
-    ):
+    def __init__(self, get_match_key: callable, sorted_by_arrival_order: bool, clean_up_interval: int):
         self._partial_matches = []
         if get_match_key is None:
             self._get_key = lambda x: x
@@ -88,17 +82,11 @@ class PatternMatchStorage:
         Removes pattern matches whose earliest earliest_timestamp violates the time window constraint.
         """
         if self._sorted_by_arrival_order:
-            count = find_partial_match_by_timestamp(
-                self._partial_matches, earliest_timestamp
-            )
+            count = find_partial_match_by_timestamp(self._partial_matches, earliest_timestamp)
             self._partial_matches = self._partial_matches[count:]
         else:
-            self._partial_matches = list(
-                filter(
-                    lambda pm: pm.first_timestamp >= earliest_timestamp,
-                    self._partial_matches,
-                )
-            )
+            self._partial_matches = list(filter(lambda pm: pm.first_timestamp >= earliest_timestamp,
+                                                self._partial_matches))
 
     def get_internal_buffer(self):
         """
@@ -123,19 +111,9 @@ class SortedPatternMatchStorage(PatternMatchStorage):
     """
     This class stores the pattern matches sorted in increasing order according to a predefined function (key).
     """
-
-    def __init__(
-        self,
-        get_match_key: callable,
-        rel_op: RelopTypes,
-        equation_side: EquationSides,
-        clean_up_interval: int,
-        sort_by_first_timestamp=False,
-        in_leaf=False,
-    ):
-        super().__init__(
-            get_match_key, in_leaf and sort_by_first_timestamp, clean_up_interval
-        )
+    def __init__(self, get_match_key: callable, rel_op: RelopTypes, equation_side: EquationSides,
+                 clean_up_interval: int, sort_by_first_timestamp=False, in_leaf=False):
+        super().__init__(get_match_key, in_leaf and sort_by_first_timestamp, clean_up_interval)
         self.__get_function = self.__generate_get_function(rel_op, equation_side)
 
     def __contains__(self, item):
@@ -171,41 +149,29 @@ class SortedPatternMatchStorage(PatternMatchStorage):
         Returns the pattern matches whose keys are equal to the given value.
         """
         left_index = get_first_index(self._partial_matches, value, self._get_key)
-        if (
-            left_index == len(self._partial_matches)
-            or left_index == -1
-            or self._get_key(self._partial_matches[left_index]) != value
-        ):
+        if left_index == len(self._partial_matches) or left_index == -1 or \
+                self._get_key(self._partial_matches[left_index]) != value:
             return []
         right_index = get_last_index(self._partial_matches, value, self._get_key)
-        return self._partial_matches[left_index : right_index + 1]
+        return self._partial_matches[left_index: right_index + 1]
 
     def __get_unequal(self, value: int or float):
         """
         Returns the pattern matches whose keys are not equal to the given value.
         """
         left_index = get_first_index(self._partial_matches, value, self._get_key)
-        if (
-            left_index == len(self._partial_matches)
-            or left_index == -1
-            or self._get_key(self._partial_matches[left_index]) != value
-        ):
+        if left_index == len(self._partial_matches) or left_index == -1 or \
+                self._get_key(self._partial_matches[left_index]) != value:
             return self._partial_matches
         right_index = get_last_index(self._partial_matches, value, self._get_key)
-        return (
-            self._partial_matches[:left_index]
-            + self._partial_matches[right_index + 1 :]
-        )
+        return self._partial_matches[:left_index] + self._partial_matches[right_index + 1:]
 
     def __get_greater_aux(self, value: int or float, return_equal: bool):
         """
         An auxiliary method for implementing "greater than" or "greater than or equal to" conditions.
         """
-        right_index = (
-            get_first_index(self._partial_matches, value, self._get_key)
-            if return_equal
+        right_index = get_first_index(self._partial_matches, value, self._get_key) if return_equal \
             else get_last_index(self._partial_matches, value, self._get_key)
-        )
         if right_index == len(self._partial_matches):
             return []
         if right_index == -1:
@@ -213,11 +179,7 @@ class SortedPatternMatchStorage(PatternMatchStorage):
         # in case value doesn't exist right_index will point on the first one greater than it
         if self._get_key(self._partial_matches[right_index]) != value:
             return self._partial_matches[right_index:]
-        return (
-            self._partial_matches[right_index:]
-            if return_equal
-            else self._partial_matches[right_index + 1 :]
-        )
+        return self._partial_matches[right_index:] if return_equal else self._partial_matches[right_index + 1:]
 
     def __get_greater(self, value: int or float):
         """
@@ -235,11 +197,8 @@ class SortedPatternMatchStorage(PatternMatchStorage):
         """
         An auxiliary method for implementing "smaller than" or "smaller than or equal to" conditions.
         """
-        left_index = (
-            get_last_index(self._partial_matches, value, self._get_key)
-            if return_equal
+        left_index = get_last_index(self._partial_matches, value, self._get_key) if return_equal \
             else get_first_index(self._partial_matches, value, self._get_key)
-        )
         if left_index == len(self._partial_matches):
             return self._partial_matches
         if left_index == -1:
@@ -247,11 +206,7 @@ class SortedPatternMatchStorage(PatternMatchStorage):
         # in case value doesn't exist left_index will point on the first one smaller than it
         if self._get_key(self._partial_matches[left_index]) != value:
             return self._partial_matches[: left_index + 1]
-        return (
-            self._partial_matches[: left_index + 1]
-            if return_equal
-            else self._partial_matches[:left_index]
-        )
+        return self._partial_matches[:left_index + 1] if return_equal else self._partial_matches[:left_index]
 
     def __get_smaller(self, value: int or float):
         """
@@ -284,30 +239,14 @@ class SortedPatternMatchStorage(PatternMatchStorage):
             return self.__get_unequal
 
         if rel_op == RelopTypes.Greater:
-            return (
-                self.__get_greater
-                if equation_side == EquationSides.left
-                else self.__get_smaller
-            )
+            return self.__get_greater if equation_side == EquationSides.left else self.__get_smaller
         if rel_op == RelopTypes.Smaller:
-            return (
-                self.__get_smaller
-                if equation_side == EquationSides.left
-                else self.__get_greater
-            )
+            return self.__get_smaller if equation_side == EquationSides.left else self.__get_greater
 
         if rel_op == RelopTypes.GreaterEqual:
-            return (
-                self.__get_greater_or_equal
-                if equation_side == EquationSides.left
-                else self.__get_smaller_or_equal
-            )
+            return self.__get_greater_or_equal if equation_side == EquationSides.left else self.__get_smaller_or_equal
         if rel_op == RelopTypes.SmallerEqual:
-            return (
-                self.__get_smaller_or_equal
-                if equation_side == EquationSides.left
-                else self.__get_greater_or_equal
-            )
+            return self.__get_smaller_or_equal if equation_side == EquationSides.left else self.__get_greater_or_equal
 
 
 class UnsortedPatternMatchStorage(PatternMatchStorage):
@@ -315,7 +254,6 @@ class UnsortedPatternMatchStorage(PatternMatchStorage):
     This class stores pattern matches unsorted.
     It is used when it's difficult to specify an order that helps when receiving partial matches.
     """
-
     def __init__(self, clean_up_interval: int):
         super().__init__(lambda x: x, False, clean_up_interval)
 
@@ -337,24 +275,17 @@ class TreeStorageParameters:
     """
     Parameters for the evaluation tree to specify how to store the data.
     """
-
-    def __init__(
-        self,
-        sort_storage: bool = DefaultConfig.SHOULD_SORT_STORAGE,
-        attributes_priorities: dict = None,
-        clean_up_interval: int = DefaultConfig.CLEANUP_INTERVAL,
-        prioritize_sorting_by_timestamp: bool = DefaultConfig.PRIORITIZE_SORTING_BY_TIMESTAMP,
-    ):
+    def __init__(self, sort_storage: bool = DefaultConfig.SHOULD_SORT_STORAGE, attributes_priorities: dict = None,
+                 clean_up_interval: int = DefaultConfig.CLEANUP_INTERVAL,
+                 prioritize_sorting_by_timestamp: bool = DefaultConfig.PRIORITIZE_SORTING_BY_TIMESTAMP):
         if sort_storage is None:
             sort_storage = DefaultConfig.SHOULD_SORT_STORAGE
         if attributes_priorities is None:
             attributes_priorities = {}
         if clean_up_interval <= 0:
-            raise Exception("cleanup interval should be positive.")
+            raise Exception('cleanup interval should be positive.')
         if prioritize_sorting_by_timestamp is None:
-            prioritize_sorting_by_timestamp = (
-                DefaultConfig.PRIORITIZE_SORTING_BY_TIMESTAMP
-            )
+            prioritize_sorting_by_timestamp = DefaultConfig.PRIORITIZE_SORTING_BY_TIMESTAMP
 
         # True if the user is willing to use non-default sorted storage and False otherwise
         self.sort_storage = sort_storage

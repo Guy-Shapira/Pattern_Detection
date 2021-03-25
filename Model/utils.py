@@ -19,28 +19,44 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 # from plugin.ToyExample.Toy import DataFormatter
 from plugin.Football.Football_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
-from base.Formula import (
-    GreaterThanFormula,
-    SmallerThanFormula,
-    SmallerThanEqFormula,
-    GreaterThanEqFormula,
-    MulTerm,
-    EqFormula,
-    IdentifierTerm,
-    AtomicTerm,
-    AndFormula,
-    TrueFormula,
-    NotEqFormula,
-    OrFormula,
 
-)
-from base.PatternStructure import (
-    AndOperator,
-    SeqOperator,
-    PrimitiveEventStructure,
-    NegationOperator,
-)
+
+from condition.Condition import Variable, TrueCondition, BinaryCondition
+from condition.CompositeCondition import AndCondition, OrCondition
+from condition.BaseRelationCondition import GreaterThanCondition, SmallerThanCondition, EqCondition, NotEqCondition, GreaterThanEqCondition, SmallerThanEqCondition
+from base.PatternStructure import SeqOperator, PrimitiveEventStructure, NegationOperator
 from base.Pattern import Pattern
+import random
+from plan.negation.NegationAlgorithmTypes import NegationAlgorithmTypes
+
+from adaptive.optimizer.OptimizerFactory import OptimizerParameters
+from adaptive.optimizer.OptimizerTypes import OptimizerTypes
+from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
+
+
+# #
+# from base.Formula import (
+#     GreaterThanFormula,
+#     SmallerThanFormula,
+#     SmallerThanEqFormula,
+#     GreaterThanEqFormula,
+#     MulTerm,
+#     EqFormula,
+#     IdentifierTerm,
+#     AtomicTerm,
+#     AndFormula,
+#     TrueFormula,
+#     NotEqFormula,
+#     OrFormula,
+#
+# )
+# from base.PatternStructure import (
+#     AndOperator,
+#     SeqOperator,
+#     PrimitiveEventStructure,
+#     NegationOperator,
+# # )
+# from base.Pattern import Pattern
 from datetime import timedelta
 import csv
 import pickle
@@ -50,15 +66,24 @@ absolutePath = str(currentPath.parent)
 sys.path.append(absolutePath)
 
 INCLUDE_BENCHMARKS = False
+# DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismParameters(
+#     TreePlanBuilderParameters(
+#         TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
+#         TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL,
+#     ),
+#     TreeStorageParameters(
+#         sort_storage=False, clean_up_interval=10, prioritize_sorting_by_timestamp=True
+#     ),
+# )
+
 DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismParameters(
-    TreePlanBuilderParameters(
-        TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
-        TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL,
-    ),
-    TreeStorageParameters(
-        sort_storage=False, clean_up_interval=10, prioritize_sorting_by_timestamp=True
-    ),
-)
+    optimizer_params=OptimizerParameters(opt_type=OptimizerTypes.TRIVIAL_OPTIMIZER,
+                                         tree_plan_params=TreePlanBuilderParameters(builder_type=TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
+                              cost_model_type=TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL,
+                              tree_plan_merger_type=MultiPatternTreePlanMergeApproaches.TREE_PLAN_TRIVIAL_SHARING_LEAVES)),
+    storage_params=TreeStorageParameters(sort_storage=False, clean_up_interval=10, prioritize_sorting_by_timestamp=True))
+
+
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 
 
@@ -76,100 +101,122 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
     """
     # This is dumb, but for now:
     if comp_target != "value":
-        if comp_target == "":
-            print(f"Comp FUCK")
-            print(f"action {action_type}")
+        # if comp_target == "":
+            # print(f"Comp FUCK")
+            # print(f"action {action_type}")
             # print(f"Comp FUCK")
         if bindings[0] == chr(ord("a") + comp_target):
-            return TrueFormula() # cant compate to it self
+            return TrueCondition() # cant compate to it self
         elif comp_target >= curr_len:
-            return TrueFormula()
+            return TrueCondition()
         else:
             try:
                 bindings[1] = chr(ord("a") + comp_target)
             except Exception as e:
                 # end op list
-                return TrueFormula()
+                return TrueCondition()
 
+    # try:
     if action_type == "nop":
-        return TrueFormula()
+        return TrueCondition()
     elif len(action_type.split("v")) == 2:
         action_type = action_type.split("v")[1]
         if action_type.startswith("<"):
-            return SmallerThanFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
-            )
+            return SmallerThanCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
+                )
         elif action_type.startswith(">"):
-            return GreaterThanFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            return GreaterThanCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
             )
         elif action_type.startswith("="):
-            return EqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            return EqCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
             )
         elif action_type.startswith("not <"):
-            return GreaterThanEqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            return GreaterThanEqCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
             )
         elif action_type.startswith("not >"):
-            return SmallerThanEqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            return SmallerThanEqCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
             )
         elif action_type.startswith("+"):
-            return GreaterThanEqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                IdentifierTerm(bindings[1], lambda x: x[attribute] + value),
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] + value),
+                lambda x, y: x >= y + value,
+
             )
         elif action_type.startswith("-"):
-            return GreaterThanEqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                IdentifierTerm(bindings[1], lambda x: x[attribute] - value),
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] - value),
+                lambda x, y: x >= y + value,
+
             )
         elif action_type.startswith("not +"):
-            return SmallerThanFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                IdentifierTerm(bindings[1], lambda x: x[attribute] + value),
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: x < y + value,
             )
         elif action_type.startswith("not -"):
-            return SmallerThanFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]),
-                IdentifierTerm(bindings[1], lambda x: x[attribute] - value),
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: x < y - value,
+            )
+        elif action_type.startswith("*="):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute] + value),
+                lambda x, y: int(x) == int(y * value),
+
+            )
+        elif action_type.startswith("not *"):
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(bindings[1], lambda x: x[attribute]),
+                lambda x, y: int(x) != int(y * value),
             )
         else:  # action_type == "not ="
-            return NotEqFormula(
-                IdentifierTerm(bindings[0], lambda x: x[attribute]), AtomicTerm(value)
+            return NotEqCondition(
+                Variable(bindings[0], lambda x: x[attribute]), value
             )
 
     elif action_type == "<":
-        return SmallerThanFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return SmallerThanCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
     elif action_type == ">":
-        return GreaterThanFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return GreaterThanCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
     elif action_type == "=":
-        return EqFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return EqCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
     elif action_type == "not <":
-        return GreaterThanEqFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return GreaterThanEqCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
     elif action_type == "not >":
-        return SmallerThanEqFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return SmallerThanEqCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
     else:  # action_type == "not ="
-        return NotEqFormula(
-            IdentifierTerm(bindings[0], lambda x: x[attribute]),
-            IdentifierTerm(bindings[1], lambda x: x[attribute]),
+        return NotEqCondition(
+            Variable(bindings[0], lambda x: x[attribute]),
+            Variable(bindings[1], lambda x: x[attribute]),
         )
+    # except Exception as e: #TODO: FIX!
+    #     return TrueCondition()
 
 
 def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is_last=False):
@@ -177,10 +224,10 @@ def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is
     num_ops_remaining = sum([i != "nop" for i in actions])
     num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
-        return TrueFormula()
+        return TrueCondition()
     if is_last:  #TODO: remove this, for now need to change to if 0
         if num_comps_remaining == 0:
-            return TrueFormula()
+            return TrueCondition()
         elif comps[0] == "nop":
             return build_event_formula(
                 bind, curr_len, actions[1:], comps[1:], cols[1:], conds[1:], targets[1:], is_last=True
@@ -194,18 +241,25 @@ def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is
         else:
             return get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0])
     else:
+        event_forumla = build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:])
         if actions[0] == "nop":
-            return build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:])
+            return event_forumla
         else:
-            if conds[0] == "and":
-                return AndFormula(
-                    get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0]),
-                    build_event_formula(bind, curr_len, actions[1:], comps[1:], cols[1:], conds[1:], targets[1:]),
+            next_formula = get_next_formula(bind, curr_len, actions[0], comps[0], cols[0], targets[0])
+
+            if isinstance(event_forumla, TrueCondition):
+                return next_formula
+            elif isinstance(next_formula, TrueCondition):
+                return event_forumla
+            elif conds[0] == "and":
+                return AndCondition(
+                    next_formula,
+                    event_forumla,
                 )
             else:
-                return OrFormula(
-                    get_next_formula(bind, curr_len,  actions[0], comps[0], cols[0], targets[0]),
-                    build_event_formula(bind, curr_len,  actions[1:], comps[1:], cols[1:], conds[1:], targets[1:]),
+                return OrCondition(
+                    next_formula,
+                    event_forumla,
                 )
 
 def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, all_comps):
@@ -228,10 +282,14 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
         event_forumla = build_event_formula(
             bindings, curr_len, action_types[0], comp_values[0], cols[0], conds[0], all_comps[0]
         )
-        return AndFormula(
-            event_forumla,
-            build_formula(bindings[1:], curr_len, action_types[1:], comp_values[1:], cols[1:], conds[1:], all_comps[1:]),
-        )
+        next_formula = build_formula(bindings[1:], curr_len, action_types[1:], comp_values[1:], cols[1:], conds[1:], all_comps[1:])
+        if isinstance(next_formula, TrueCondition):
+            return event_forumla
+        else:
+            return AndCondition(
+                event_forumla,
+                next_formula
+            )
 
 
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps):
@@ -250,13 +308,17 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     [cols_rep.append(cols) for i in range(len(actions))]
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
+    # print(build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps))
+    test1 = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
+    # print(f"A: {test1}")
+    # print(f"B: {test1[0]}")
+    # print(*test1)
+    # print(SeqOperator(*test1))
+    # print(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]))
+    # input("next")
+
     pattern = Pattern(
-        SeqOperator(
-            [
-                PrimitiveEventStructure(event, chr(ord("a") + i))
-                for i, event in enumerate(actions)
-            ]
-        ),
+        SeqOperator(*test1),
         build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
         timedelta(seconds=7),
     )
@@ -437,9 +499,8 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     if not_flag and action != "nop":
         action = "not " + action
 
-
-    comp_to = int(mini_action / len(actions))
-    if action in ["+>", "->"]:
+    comp_to = int(mini_action / len(actions) )
+    if sum([i in action for i in ["+>", "->", "*="]]):
         if comp_to == match_max_size:
             action = "nop"
             comp_to = ""
@@ -448,6 +509,7 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     elif comp_to == match_max_size:
         comp_to = "value"
         action = "v" + action + " value"
+
 
     return action, cond, comp_to
 
@@ -482,9 +544,33 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
                     action = action.split("v")[1]
                     if sum([i in action for i in ["+>", "->"]]):
                         if event_index != len(events) - 1:
-                            if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
-                                str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
-                                and_flag = True
+                            try:
+                                if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                                    str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                                    and_flag = True
+                            except Exception as e:
+                                print(e)
+                                print(action)
+                                print(f" comp target {comp_target[event_index][i]}")
+                                print(f" event_char {event_char}")
+                                print(f" event_index {event_index}")
+                                exit()
+                    elif "*=" in action:
+                        if event_index != len(events) - 1:
+                            try:
+                                if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                                    if "not" in action:
+                                        str_pattern += f"{event_char}.{cols[i]} = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} * {comp_vals[event_index][i]}"
+                                    else:
+                                        str_pattern += f"{event_char}.{cols[i]} not = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                                    and_flag = True
+                            except Exception as e:
+                                print(e)
+                                print(action)
+                                print(f" comp target {comp_target[event_index][i]}")
+                                print(f" event_char {event_char}")
+                                print(f" event_index {event_index}")
+                                exit()
                     else:
                         str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
                         and_flag = True
@@ -498,8 +584,9 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
 
                             if i != len(comps) - 1:
                                 str_pattern += f" {curr_conds[i]} "
-        if event_index != len(events) - 1 and and_flag:
-            str_pattern += " and "
+            if event_index != len(events) - 1 and and_flag:
+                str_pattern += " and "
+                and_flag = False
     return str_pattern
 
 

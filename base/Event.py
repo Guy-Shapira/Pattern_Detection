@@ -19,13 +19,13 @@ class Event:
         self.type = data_formatter.get_event_type(self.payload)
         self.timestamp = data_formatter.get_event_timestamp(self.payload)
         self.payload[Event.INDEX_ATTRIBUTE_NAME] = Event.counter
+        self.probability = data_formatter.get_probability(self.payload)
+        if self.probability is not None and (self.probability < 0.0 or self.probability > 1.0):
+            raise Exception("Invalid value for probability:%s" % (self.probability,))
         Event.counter += 1
 
     def __eq__(self, other):
-        return (
-            self.payload[Event.INDEX_ATTRIBUTE_NAME]
-            == other.payload[Event.INDEX_ATTRIBUTE_NAME]
-        )
+        return self.payload[Event.INDEX_ATTRIBUTE_NAME] == other.payload[Event.INDEX_ATTRIBUTE_NAME]
 
     def __hash__(self):
         return hash(self.payload[Event.INDEX_ATTRIBUTE_NAME])

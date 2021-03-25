@@ -5,7 +5,6 @@ class Stream:
     """
     Represents a generic stream of objects.
     """
-
     def __init__(self):
         self._stream = Queue()
 
@@ -49,7 +48,6 @@ class InputStream(Stream):
     """
     A stream receiving its items from some external source.
     """
-
     def add_item(self, item: object):
         raise Exception("Unsupported operation")
 
@@ -58,7 +56,6 @@ class OutputStream(Stream):
     """
     A stream sending its items to some external sink.
     """
-
     def get_item(self):
         raise Exception("Unsupported operation")
 
