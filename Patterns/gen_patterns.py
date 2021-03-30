@@ -12,6 +12,7 @@ from Patterns.utils import (
     get_action_type,
     create_pattern_str,
     store_patterns_and_rating_to_csv,
+    normalizeData,
 )
 import tqdm
 import sys
@@ -45,6 +46,7 @@ class genDataClass(nn.Module):
         num_cols=5,
     ):
         super().__init__()
+        self.actions = [">", "<", "=", "+>", "->", "*="]
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -57,11 +59,10 @@ class genDataClass(nn.Module):
         self.data = self.data.view(len(self.data), -1)
         self.hidden_size = 2048
         self.num_cols = num_cols
-        self.num_actions = (3 * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
+        self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         # self.num_actions = self.value_options * self.num_events + 1
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
-        self.actions = [">", "<", "="]
         # self.cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
         # self.cols  = ["x", "y", "z", "vx", "vy", "vz"]
         self.cols  = ["x", "y", "z", "vx", "vy"]
@@ -178,16 +179,8 @@ def genData(model, num_epochs=10):
 
                         for j, action_val in enumerate(actions_vals):
                             data = data.clone()
-                            try:
-                                data[data_size + count * (model.num_cols + 1) + j + 1] = model.embedding_actions(
-                                    torch.tensor(action_val))
-                                # data2[data_size + count * (model.num_cols + 1) + j + 1] = data[data_size + count * (model.num_cols + 1) + j + 1]
-                            except Exception as e:
-                                print(f" len of arr {len(data)}")
-                                print(f"index {data_size + count * (model.num_cols + 1) + j + 1}")
-                                print(f"count {count}, j {j}")
-                                print(e)
-                                exit()
+                            data[data_size + count * (model.num_cols + 1) + j + 1] = model.embedding_actions(
+                                torch.tensor(action_val))
                         actions.append(mini_actions)
                         all_conds.append(conds)
                         all_comps.append(comps)
@@ -202,9 +195,7 @@ def genData(model, num_epochs=10):
                         if len(events) == 1:
                             user_reward = np.random.uniform(0.8, 1.25)
                         else:
-                            # print(events)
                             events_ball = [4 if event in [4,8,10] else event for event in events]
-                            # print(events_ball)
                             unique, app_count = np.unique(events, return_counts=True)
                             for i in range(len(unique)):
                                 if unique[i] != 4:
@@ -216,26 +207,21 @@ def genData(model, num_epochs=10):
 
                             flatten = lambda list_list: [item for sublist in list_list for item in sublist]
                             flat_conds = flatten(all_conds)
-                            if flat_conds.count("and") < (2/3) * len(flat_conds):
+                            if flat_conds.count("and") < 0.5 * len(flat_conds):
                                 user_reward -= 1
-                            # if flat_conds.count("or") > 5 :
-                            #     user_reward -= 1.5
                             flat_actions = flatten(actions)
                             not_count = sum([str.startswith("not") for str in flat_actions])
                             unique, app_count = np.unique(flat_actions, return_counts=True)
-                            for k in range(len(unique)):
-                                if unique[k].startswith("not"):
-                                    pass
-                                    # user_reward -= math.pow(0.2, k+1) * app_count[k] * 1.5
-                                else:
-                                    user_reward += math.pow(0.2, k + 1) * app_count[k] * 1.25
-                            user_reward -= 0.25 * not_count
+                            # for k in range(len(unique)):
+                            #     if unique[k].startswith("not"):
+                            #         user_reward -= math.pow(0.2, k+1) * app_count[k] * 0.5
+                            user_reward -= 0.5 * not_count
                             ball_unique = np.unique(events_ball)
                             if len(events_ball) >= 3 and len(ball_unique) == 1:
                                 user_reward = 0
                             else:
                                 num_non_ball = sum([1 if event != 4 else 0 for event in events_ball])
-                                if len(events_ball) >= 5 and num_non_ball <=2 :
+                                if len(events_ball) >= 5 and num_non_ball <= 2 :
                                     user_reward = 0
 
                         if np.random.randint(5) == 0:
@@ -245,11 +231,14 @@ def genData(model, num_epochs=10):
                         is_done = True
 
 
+
+
 def main():
     class_inst = genDataClass(data_path="Football/xaa", num_events=41,
                                  max_values=[97000, 100000, 15000, 20000, 20000, 20000],
                                  normailze_values=[24000, 45000, 6000, 9999, 9999, 9999])
     genData(class_inst)
+    normalizeData()
 
 
 if __name__ == "__main__":

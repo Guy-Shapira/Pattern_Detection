@@ -71,10 +71,9 @@ class ruleMiningClass(nn.Module):
         self.embedding_count = nn.Embedding(max_count, 3)
         self.data = self._create_data(data_path)
         self.data = self.data.view(len(self.data), -1)
-        self.hidden_size = 2048
+        self.hidden_size = 1024
         self.num_cols = num_cols
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
-        # self.num_actions = self.value_options * self.num_events + 1
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
         self.linear_base = nn.Linear(
@@ -90,20 +89,11 @@ class ruleMiningClass(nn.Module):
             ]
         ).cuda()
         self.critic = nn.Linear(self.hidden_size, 1).cuda()
-          # This is probably very shite
-        # TODO: add follow option, maybe double the num action, so it would be action + follow/not follow
-        # needs to be smarter if follow is not possible
 
-        # self.value_layer = nn.ModuleList(
-        #     [nn.Linear(self.hidden_size, self.max_values[i]) for i in range(self.num_cols)]
-        # )
         self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-6)
         self.all_cols = ["x", "y", "z", "vx", "vy", "vz", "ax", "ay", "az"]
-        # self.cols  = ["x", "y", "z", "vx", "vy", "vz"]
         self.cols  = ["x", "y", "z", "vx", "vy"]
-        # self.cols  = ["x", "y", "z", "vx"]
-        # self.cols  = ["x", "y", "z"]
         self.max_fine_app = max_fine_app
         self.knn_avg = 0
         self.knn = self._create_df()
@@ -112,12 +102,12 @@ class ruleMiningClass(nn.Module):
         self.max_values_bayes = [i - j for i,j in zip(max_values, normailze_values)]
 
     def _create_df(self):
-        df = pd.read_csv("Patterns/pattern11.csv")[["pattern", "rating"]]
+        df = pd.read_csv("Patterns/pattern12.csv")[["pattern", "rating"]]
         df.pattern = df.pattern.apply(lambda x : x.split(","))
         df.pattern = df.pattern.apply(lambda x : [float(i) for i in x])
         df.rating = df.rating.apply(lambda x : round(float(x) + 0.5))
         df_patterns = pd.DataFrame(df.pattern.values.tolist())
-        df_patterns.replace(0, PAD_VALUE, inplace=True)
+        df_patterns.replace(0.0, PAD_VALUE, inplace=True)
         df_patterns = df_patterns.iloc[:, :-1]
         print(df_patterns[:10])
         knn = KNN(n_neighbors=5)
@@ -191,29 +181,29 @@ class ruleMiningClass(nn.Module):
         # return x
         return event_after_softmax, value
 
-    def get_event(self, input, index=0, mask=None, T=1):
-        probs, value = self.forward(Variable(input), mask, T=T)
-        numpy_probs = probs.detach().cpu().numpy()
-        if index % 10 == 0 and index != 0:
-            print(numpy_probs)
-            time.sleep(0)
-            # exit()
-        action = np.random.choice(
-            self.num_events + 1, p=np.squeeze(numpy_probs)
-        )
-        log_prob = torch.log(probs.squeeze(0)[action])
-        print(f"log {log_prob} ")
-        if abs(log_prob) < 0.1:
-            self.count += 1
-        if abs(log_prob) < 0.01:
-            time.sleep(0)
-            # input("Press Enter to continue...")
+    def get_event(self, input, index=0, mask=None, training_factor=0.0, T=1):
+        if np.random.rand() > 1 - training_factor:
+            action = np.random.randint(len(mask))
+            return action, PAD_VALUE, random.uniform(-100, 100), 0.0
+        else:
+            probs, value = self.forward(Variable(input), mask, T=T)
+            numpy_probs = probs.detach().cpu().numpy()
+            if index % 10 == 0 and index != 0:
+                print(numpy_probs)
+                time.sleep(0)
+                # exit()
+            action = np.random.choice(
+                self.num_events + 1, p=np.squeeze(numpy_probs)
+            )
+            log_prob = torch.log(probs.squeeze(0)[action])
+            if abs(log_prob) < 0.1:
+                self.count += 1
 
-        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
+            entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
         return action, log_prob, value, entropy
 
 
-    def single_col_mini_action(self, data, index):
+    def single_col_mini_action(self, data, index, training_factor=0.0):
         # replace get event
         x = F.relu(self.action_layers[index](data))
         probs = F.softmax(x, dim=0)
@@ -223,6 +213,9 @@ class ruleMiningClass(nn.Module):
             self.num_actions, p=np.squeeze(numpy_probs)
         )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
+
+        if np.random.rand() > 1 - training_factor:
+            highest_prob_action = np.random.randint(len(probs))
         highest_prob_value = None
         mini_action, _, _ = get_action_type(
             highest_prob_action, self.num_actions, self.actions, self.match_max_size
@@ -231,9 +224,10 @@ class ruleMiningClass(nn.Module):
 
         if len(mini_action.split("value")) > 1:
             highest_prob_value = "value"
+
         return highest_prob_action, highest_prob_value, log_prob, entropy
 
-    def get_cols_mini_actions(self, data):
+    def get_cols_mini_actions(self, data, training_factor=0.0):
         mini_actions = []
         log_probs = 0.0
         compl_vals = []
@@ -244,7 +238,7 @@ class ruleMiningClass(nn.Module):
         updated_data = self.linear_base(data)
         for i in range(self.num_cols):
             # TODO: save return values and stuffx
-            action, value, log, entropy = self.single_col_mini_action(updated_data, i) #this is weird, should update data after actions
+            action, value, log, entropy = self.single_col_mini_action(updated_data, i, training_factor) #this is weird, should update data after actions
             mini_actions_vals.append(action)
             total_entropy += entropy / self.num_cols
             mini_action, cond, comp_to = get_action_type(action, self.num_actions, self.actions, self.match_max_size)
@@ -317,7 +311,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     policy_network.optimizer.step()
 
 
-def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=100):
+def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=55):
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
     added_info_size_knn = (model.match_max_size + 1) * (6 + 1)
@@ -332,19 +326,21 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
     all_ratings = []
     entropy_term = 0
     turn_flag = 0
+    training_factor = 0.50
     for epoch in range(num_epochs):
-        if epoch < 5:
-            temper = temp_given
+        if epoch < 2:
+            temper = 1
             print(temper)
         else:
-            temper = 5
+            temper = 1
 
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=int(len(model.data) // (model.window_size / 9)) + 1, file=pbar_file) as pbar:
+        num_batchs = 150
+        with tqdm.tqdm(total=num_batchs, file=pbar_file) as pbar:
             in_round_count = 0
             for index in range(epoch, len(model.data), int(model.window_size / 9)):
                 in_round_count += 1
-                if in_round_count % 50 == 0:
+                if in_round_count % round_number == 0:
                     turn_flag = 1 - turn_flag
                 data = model.data[index]
                 data_size = len(data)
@@ -370,14 +366,15 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 patterns = []
                 ratings = []
                 mask = torch.tensor([1.0] * (model.num_events + 1))
-                if in_round_count % 30 == 0 and epoch < 5:
+                if in_round_count % 35 == 0 and epoch < 5:
                     temper /= 1.05
-
+                if in_round_count % 25 == 0:
+                    training_factor /= 1.1
                 while not is_done:
                     data = data.cuda()
                     mask_orig = mask.clone()
                     action, log_prob, value, entropy = model.get_event(
-                        data, in_round_count, mask, T=temper
+                        data, in_round_count, mask, training_factor=training_factor, T=temper
                     )
                     data = data.clone()
                     data[data_size + count * (model.num_cols + 1)] = model.embedding_desicions(
@@ -402,7 +399,7 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                     else:
                         event = new_mapping(action)
                         events.append(event)
-                        mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to = model.get_cols_mini_actions(data)
+                        mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to = model.get_cols_mini_actions(data, training_factor=training_factor)
                         all_comps.append(comps_to)
                         entropy_term += entropy
                         for j, action_val in enumerate(actions_vals):
@@ -441,7 +438,7 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                             )
                             try:
                                 b_optimizer.maximize(
-                                    init_points=10,
+                                    init_points=5,
                                     n_iter=5,
                                 )
 
@@ -478,7 +475,10 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                             # if 1:
                             #     if len(np.unique(events)) == 1 and len(events) >= 3:
                             #         rating = -0.1
-                            rating -= (model.knn_avg - 0.5)
+                            if len(actions) > 1:
+                                rating -= (model.knn_avg - 1)
+                            else:
+                                rating = 1
                             reward *= rating
                             rewards.append(reward)
 
@@ -490,9 +490,10 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 Qval = Qval.detach().cpu().numpy()[0]
                 del data
 
-                if epoch < 2:
+                # if epoch < 2  and in_round_count < 25:
+                if epoch == 0 and in_round_count < 30 :
                     send_rewards = rewards
-                if turn_flag == 0:
+                elif turn_flag == 0:
                     send_rewards = ratings
                 else:
                     send_rewards = real_rewards
@@ -509,15 +510,18 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=1
                 real.append(np.max(real_rewards))
                 rating_plot.append(np.max(ratings))
                 mean_real.append(np.mean(real_rewards))
+                index_max = np.argmax(real_rewards)
                 sys.stdout.write(
-                    "Real reward : {}, comparisons : {}\n".format(
-                        np.max(real_rewards),
+                    "Real reward : {}, Rating {},  comparisons : {}\n".format(
+                        real_rewards[index_max],
+                        ratings[index_max],
                         sum([t != "nop" for sub in comp_values for t in sub]),
                     )
                 )
                 if 1:
                     str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                     sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern} index = {index}\n")
+                    # sys.stdout.write(f"Pattern = {pattern} index = {index}\n")
                     # time.sleep(2)
                 sys.stdout.write(
                     "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(

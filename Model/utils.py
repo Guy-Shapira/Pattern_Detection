@@ -106,7 +106,7 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
             # print(f"action {action_type}")
             # print(f"Comp FUCK")
         if bindings[0] == chr(ord("a") + comp_target):
-            return TrueCondition() # cant compate to it self
+            return TrueCondition() # cant compare to itself
         elif comp_target >= curr_len:
             return TrueCondition()
         else:
@@ -285,6 +285,8 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
         next_formula = build_formula(bindings[1:], curr_len, action_types[1:], comp_values[1:], cols[1:], conds[1:], all_comps[1:])
         if isinstance(next_formula, TrueCondition):
             return event_forumla
+        if isinstance(event_forumla, TrueCondition):
+            return next_formula
         else:
             return AndCondition(
                 event_forumla,
@@ -534,7 +536,6 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
 def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
     str_pattern = ""
     for event_index in range(len(events)):
-        and_flag = False
         event_char = chr(ord("a") + event_index)
         comps = actions[event_index]
         curr_conds = conds[event_index]
@@ -543,51 +544,66 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
                 if action.startswith("v"):
                     action = action.split("v")[1]
                     if sum([i in action for i in ["+>", "->"]]):
-                        if event_index != len(events) - 1:
-                            try:
-                                if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
-                                    str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
-                                    and_flag = True
-                            except Exception as e:
-                                print(e)
-                                print(action)
-                                print(f" comp target {comp_target[event_index][i]}")
-                                print(f" event_char {event_char}")
-                                print(f" event_index {event_index}")
-                                exit()
+                        if (event_index != len(events) - 1) and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                            str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                        else:
+                            str_pattern += "T"
                     elif "*=" in action:
-                        if event_index != len(events) - 1:
-                            try:
-                                if chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
-                                    if "not" in action:
-                                        str_pattern += f"{event_char}.{cols[i]} = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} * {comp_vals[event_index][i]}"
-                                    else:
-                                        str_pattern += f"{event_char}.{cols[i]} not = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
-                                    and_flag = True
-                            except Exception as e:
-                                print(e)
-                                print(action)
-                                print(f" comp target {comp_target[event_index][i]}")
-                                print(f" event_char {event_char}")
-                                print(f" event_index {event_index}")
-                                exit()
+                        if (event_index != len(events) - 1) and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                            if "not" in action:
+                                str_pattern += f"{event_char}.{cols[i]} = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} * {comp_vals[event_index][i]}"
+                            else:
+                                str_pattern += f"{event_char}.{cols[i]} not = {chr(ord('a') + comp_target[event_index][i])}.{cols[i]} + {comp_vals[event_index][i]}"
+                        else:
+                            str_pattern += "T"
                     else:
                         str_pattern += f"{event_char}.{cols[i]} {action} {comp_vals[event_index][i]}"
-                        and_flag = True
-                    if i != len(comps) - 1:
-                        str_pattern += f" {curr_conds[i]} "
-                else:
-                    if event_index != len(events) - 1:
-                        if comp_target[event_index][i] != 'value' and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
-                            str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]}"
-                            and_flag = True
 
-                            if i != len(comps) - 1:
-                                str_pattern += f" {curr_conds[i]} "
-            if event_index != len(events) - 1 and and_flag:
-                str_pattern += " and "
-                and_flag = False
-    return str_pattern
+                else:
+                    if (event_index != len(events) - 1) and comp_target[event_index][i] != 'value' and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
+                        str_pattern += f"{event_char}.{cols[i]} {action} {chr(ord('a') + comp_target[event_index][i])}.{cols[i]}"
+                    else:
+                        str_pattern += "T"
+
+                if i != len(comps) - 1:
+                    str_pattern += f" {curr_conds[i]} "
+
+        if (event_index != len(events) - 1):
+            str_pattern += " AND "
+
+    return simplify_pattern(str_pattern)
+    # return str_pattern
+
+
+def simplify_pattern(str_pattern):
+    sub_patterns = str_pattern.split(" AND ")
+
+    for i, sub_pattern in enumerate(sub_patterns):
+        # print(f" Before {sub_pattern}")
+        if sub_pattern.endswith(" and "):
+            sub_pattern = sub_pattern[:-5]
+        elif sub_pattern.endswith(" or "):
+            sub_pattern = sub_pattern[:-4]
+        sub_pattern = sub_pattern.replace("T and T", "T")
+        sub_pattern = sub_pattern.replace("T and ", "")
+        sub_pattern = sub_pattern.replace(" and T", "")
+        sub_pattern = sub_pattern.replace("T or T", "T")
+        sub_pattern = sub_pattern.replace("T or ", "")
+        sub_pattern = sub_pattern.replace(" or T", "")
+        sub_patterns[i] = sub_pattern
+        # print(f" After {sub_pattern}")
+
+    simple_str = ""
+    for sub_pattern in sub_patterns:
+        if sub_pattern != "T":
+            simple_str += sub_pattern + " AND "
+
+    if simple_str.endswith(" AND "):
+        simple_str = simple_str[:-5]
+    # print(simple_str)
+    return simple_str
+
+
 
 
 def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
