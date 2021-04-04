@@ -102,7 +102,8 @@ class genDataClass(nn.Module):
 
 
 
-def genData(model, num_epochs=10):
+def genData(model, num_epochs=5):
+    flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1) + 1 # need to remove + 1
     # added_info_size_knn = (model.match_max_size + 1) * (3 + 1) + 1
@@ -161,7 +162,7 @@ def genData(model, num_epochs=10):
                         for col in range(len(model.cols)):
                             highest_prob_action = np.random.randint(model.num_actions)
                             # mini_action, cond = get_action_type(highest_prob_action, model.num_actions, model.actions)
-                            mini_action, cond, comp_to = get_action_type(action, model.num_actions, model.actions, model.match_max_size)
+                            mini_action, cond, comp_to = get_action_type(highest_prob_action, model.num_actions, model.actions, model.match_max_size)
                             comps.append(comp_to)
                             if np.random.randint(5) == 0:
                                 mini_action ="nop"
@@ -189,11 +190,11 @@ def genData(model, num_epochs=10):
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                         if len(events) > 1:
                             pass
-                            sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
+                        sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
 
                         user_reward = 1
                         if len(events) == 1:
-                            user_reward = np.random.uniform(0.8, 1.25)
+                            user_reward = np.random.uniform(0.8, 1.5)
                         else:
                             events_ball = [4 if event in [4,8,10] else event for event in events]
                             unique, app_count = np.unique(events, return_counts=True)
@@ -201,14 +202,13 @@ def genData(model, num_epochs=10):
                                 if unique[i] != 4:
                                     app_count[i] += 1
                             for k in range(len(unique)):
-                                user_reward += math.pow(0.5, k + 1) * app_count[k] * 1.5
+                                user_reward += math.pow(0.5, k + 1) * app_count[k] * 1.3
 
                             user_reward += 0.25 * sum([t != "nop" for sub in comp_values for t in sub])
 
-                            flatten = lambda list_list: [item for sublist in list_list for item in sublist]
                             flat_conds = flatten(all_conds)
                             if flat_conds.count("and") < 0.5 * len(flat_conds):
-                                user_reward -= 1
+                                user_reward -= -1.2 * (1 + flat_conds.count("or") / len(flat_conds))
                             flat_actions = flatten(actions)
                             not_count = sum([str.startswith("not") for str in flat_actions])
                             unique, app_count = np.unique(flat_actions, return_counts=True)
@@ -218,15 +218,15 @@ def genData(model, num_epochs=10):
                             user_reward -= 0.5 * not_count
                             ball_unique = np.unique(events_ball)
                             if len(events_ball) >= 3 and len(ball_unique) == 1:
-                                user_reward = 0
+                                user_reward = np.random.uniform(0.3, 1.3)
                             else:
                                 num_non_ball = sum([1 if event != 4 else 0 for event in events_ball])
                                 if len(events_ball) >= 5 and num_non_ball <= 2 :
-                                    user_reward = 0
+                                    user_reward = np.random.uniform(0.3, 1.3)
 
-                        if np.random.randint(5) == 0:
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, str_pattern)
-
+                        if np.random.randint(5) or (len(all_rewards) > 2000 and user_reward > np.percentile(all_rewards, 70)):
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern)
+                            all_rewards.append(user_reward)
                     if count >= model.match_max_size:
                         is_done = True
 
@@ -234,7 +234,7 @@ def genData(model, num_epochs=10):
 
 
 def main():
-    class_inst = genDataClass(data_path="Football/xaa", num_events=41,
+    class_inst = genDataClass(data_path="Football/x00", num_events=41,
                                  max_values=[97000, 100000, 15000, 20000, 20000, 20000],
                                  normailze_values=[24000, 45000, 6000, 9999, 9999, 9999])
     genData(class_inst)

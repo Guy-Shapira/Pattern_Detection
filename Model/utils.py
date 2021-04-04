@@ -133,11 +133,11 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
             return EqCondition(
                 Variable(bindings[0], lambda x: x[attribute]), value
             )
-        elif action_type.startswith("not <"):
+        elif action_type.startswith("not<"):
             return GreaterThanEqCondition(
                 Variable(bindings[0], lambda x: x[attribute]), value
             )
-        elif action_type.startswith("not >"):
+        elif action_type.startswith("not>"):
             return SmallerThanEqCondition(
                 Variable(bindings[0], lambda x: x[attribute]), value
             )
@@ -155,13 +155,13 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
                 lambda x, y: x >= y + value,
 
             )
-        elif action_type.startswith("not +"):
+        elif action_type.startswith("not+"):
             return BinaryCondition(
                 Variable(bindings[0], lambda x: x[attribute]),
                 Variable(bindings[1], lambda x: x[attribute]),
                 lambda x, y: x < y + value,
             )
-        elif action_type.startswith("not -"):
+        elif action_type.startswith("not-"):
             return BinaryCondition(
                 Variable(bindings[0], lambda x: x[attribute]),
                 Variable(bindings[1], lambda x: x[attribute]),
@@ -174,7 +174,7 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
                 lambda x, y: int(x) == int(y * value),
 
             )
-        elif action_type.startswith("not *"):
+        elif action_type.startswith("not*"):
             return BinaryCondition(
                 Variable(bindings[0], lambda x: x[attribute]),
                 Variable(bindings[1], lambda x: x[attribute]),
@@ -200,12 +200,12 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
             Variable(bindings[0], lambda x: x[attribute]),
             Variable(bindings[1], lambda x: x[attribute]),
         )
-    elif action_type == "not <":
+    elif action_type == "not<":
         return GreaterThanEqCondition(
             Variable(bindings[0], lambda x: x[attribute]),
             Variable(bindings[1], lambda x: x[attribute]),
         )
-    elif action_type == "not >":
+    elif action_type == "not>":
         return SmallerThanEqCondition(
             Variable(bindings[0], lambda x: x[attribute]),
             Variable(bindings[1], lambda x: x[attribute]),
@@ -499,7 +499,7 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
 
     action = actions[mini_action % len(actions)]
     if not_flag and action != "nop":
-        action = "not " + action
+        action = "not" + action
 
     comp_to = int(mini_action / len(actions) )
     if sum([i in action for i in ["+>", "->", "*="]]):
@@ -507,10 +507,10 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
             action = "nop"
             comp_to = ""
         else:
-            action = "v" + action + " value"
+            action = "v" + action + "value"
     elif comp_to == match_max_size:
         comp_to = "value"
-        action = "v" + action + " value"
+        action = "v" + action + "value"
 
 
     return action, cond, comp_to

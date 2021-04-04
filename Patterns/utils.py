@@ -34,8 +34,8 @@ from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
 
-CSV_PATH = "Patterns/pattern12_temp.csv"
-CSV_PATH_FINAL = "Patterns/pattern12.csv"
+CSV_PATH = "Patterns/pattern14_temp.csv"
+CSV_PATH_FINAL = "Patterns/pattern14.csv"
 
 # #
 # from base.Formula import (
@@ -598,7 +598,7 @@ def simplify_pattern(str_pattern):
 
 
 
-def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
+def store_patterns_and_rating_to_csv(pattern, user_rating, events, actions, conds, str_pattern):
     pattern_copy = pattern.detach().numpy()
     pattern_copy = [str(i) for i in pattern_copy]
     pattern_copy = ','.join(pattern_copy)
@@ -609,13 +609,15 @@ def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
     with open(CSV_PATH, modifier) as csv_file:
         writer = csv.writer(csv_file)
         if modifier == "w":
-            writer.writerow(["pattern", "rating", "events", "pattern_str"])
-        writer.writerow([pattern_copy, user_rating, events, str_pattern])
+            writer.writerow(["pattern", "rating", "events", "actions", "conds", "pattern_str"])
+        writer.writerow([pattern_copy, user_rating, events, actions, conds, str_pattern])
 
 
 def normalizeData():
     df = pd.read_csv(CSV_PATH)
     min_val = df['rating'].min()
     max_val = df['rating'].max()
-    df['rating'] = [4 * (i-min_val)/(max_val - min_val) + 1 for i in df['rating']]
+    mean_val = df['rating'].mean()
+    df['rating'] = [10 * (i-min_val)/(max_val - min_val) for i in df['rating']]
+    # df['rating'] =  [max(0, i - mean_val) for i in df['rating']]
     df.to_csv(CSV_PATH_FINAL)

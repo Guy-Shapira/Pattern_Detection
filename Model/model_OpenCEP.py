@@ -1,4 +1,5 @@
 import torch
+import random
 import torch.nn as nn
 import os
 from Model.utils import (
@@ -22,7 +23,7 @@ from Model.utils import (
 import tqdm
 import pathlib
 from bayes_opt import BayesianOptimization
-
+import ast
 import sys
 import time
 import torch.nn.functional as F
@@ -71,7 +72,7 @@ class ruleMiningClass(nn.Module):
         self.embedding_count = nn.Embedding(max_count, 3)
         self.data = self._create_data(data_path)
         self.data = self.data.view(len(self.data), -1)
-        self.hidden_size = 1024
+        self.hidden_size = 4096
         self.num_cols = num_cols
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
@@ -102,16 +103,85 @@ class ruleMiningClass(nn.Module):
         self.max_values_bayes = [i - j for i,j in zip(max_values, normailze_values)]
 
     def _create_df(self):
-        df = pd.read_csv("Patterns/pattern12.csv")[["pattern", "rating"]]
-        df.pattern = df.pattern.apply(lambda x : x.split(","))
-        df.pattern = df.pattern.apply(lambda x : [float(i) for i in x])
+        def similar(a, b):
+            return SequenceMatcher(None, a, b).ratio()
+
+        def custom_dist(x, y):
+            print(x)
+            print(y)
+            input()
+            # print(y)
+            # print(x)
+            # print(type(x))
+            # print(len(x))
+            return 3
+            sim = similar(x, y)
+            return sim
+
+        def fix_str_list_columns(data, flag=False):
+            data = data[1:]
+            data = data[:-1]
+            data = data.replace("\"", "")
+            data = data.replace("\'", "")
+            data = data.replace(" ", "")
+            temp = pd.Series(data)
+            temp = temp.str.split(",", expand=True)
+            return temp
+
+
+        def fix_str_list_columns2(temp):
+            for col in temp.columns:
+                temp[col] = temp[col].astype('category')
+                temp[col] = temp[col].cat.codes
+            # combined = temp[temp.columns[1:]].apply(lambda x: ','.join(x.dropna().astype(str)),axis=1)
+            return temp
+
+        def fix_int_list_columns(data):
+            data = data[1:]
+            data = data[:-1]
+            return data.split(",")
+            str_value = ''.join(data)
+            str_value = str_value.replace(",", "")
+            return [float(x) for x in str_value]
+
+
+        self.list_of_dfs = []
+        df = pd.read_csv("Patterns/pattern14.csv")[["rating", "events", "conds", "actions"]]
+        # df = df[:800]
+
         df.rating = df.rating.apply(lambda x : round(float(x) + 0.5))
-        df_patterns = pd.DataFrame(df.pattern.values.tolist())
-        df_patterns.replace(0.0, PAD_VALUE, inplace=True)
-        df_patterns = df_patterns.iloc[:, :-1]
-        print(df_patterns[:10])
-        knn = KNN(n_neighbors=5)
-        knn.fit(df_patterns, df["rating"])
+        str_list_columns = ["conds", "actions"]
+        int_list_columns = ["events"]
+        fit_columns = int_list_columns + str_list_columns
+        df_new = None
+        for col in fit_columns:
+            temp = None
+
+            for val in df[col]:
+                if temp is None:
+                    temp = fix_str_list_columns(val)
+                else:
+                    temp = temp.append(fix_str_list_columns(val))
+            temp = temp.reset_index(drop=True)
+
+            add_df = []
+            for col_name in temp.columns:
+                temp_dict = dict(zip(temp[col_name],temp[col_name].astype('category').cat.codes))
+                temp_dict['Nan'] = -1
+                add_df.append(temp_dict)
+            self.list_of_dfs.append(add_df)
+            combined = fix_str_list_columns2(temp)
+            combined.columns = list(map(lambda x: col + "_" + str(x), combined.columns))
+
+            if df_new is None:
+                df_new = combined
+            else:
+                df_new = pd.concat([df_new, combined], axis=1).reset_index(drop=True)
+            df_new = df_new.fillna(PAD_VALUE)
+        print(df_new)
+        # knn = KNN(n_neighbors=5, metric=custom_dist)
+        knn = KNN(n_neighbors=1)
+        knn.fit(df_new, df["rating"])
         self.knn_avg = df.rating.mean()
         return knn
 
@@ -182,24 +252,25 @@ class ruleMiningClass(nn.Module):
         return event_after_softmax, value
 
     def get_event(self, input, index=0, mask=None, training_factor=0.0, T=1):
+        probs, value = self.forward(Variable(input), mask, T=T)
+        numpy_probs = probs.detach().cpu().numpy()
+        if index % 10 == 0 and index != 0:
+            print(numpy_probs)
+            time.sleep(0)
+            # exit()
+        action = np.random.choice(
+            self.num_events + 1, p=np.squeeze(numpy_probs)
+        )
+
+
+        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
         if np.random.rand() > 1 - training_factor:
             action = np.random.randint(len(mask))
-            return action, PAD_VALUE, random.uniform(-100, 100), 0.0
-        else:
-            probs, value = self.forward(Variable(input), mask, T=T)
-            numpy_probs = probs.detach().cpu().numpy()
-            if index % 10 == 0 and index != 0:
-                print(numpy_probs)
-                time.sleep(0)
-                # exit()
-            action = np.random.choice(
-                self.num_events + 1, p=np.squeeze(numpy_probs)
-            )
-            log_prob = torch.log(probs.squeeze(0)[action])
-            if abs(log_prob) < 0.1:
-                self.count += 1
 
-            entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
+        log_prob = torch.log(probs.squeeze(0)[action])
+        if abs(log_prob) < 0.1:
+            self.count += 1
+
         return action, log_prob, value, entropy
 
 
@@ -208,19 +279,20 @@ class ruleMiningClass(nn.Module):
         x = F.relu(self.action_layers[index](data))
         probs = F.softmax(x, dim=0)
         numpy_probs = probs.detach().cpu().numpy()
-
-        highest_prob_action = np.random.choice(
-            self.num_actions, p=np.squeeze(numpy_probs)
-        )
-        log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
+        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
 
         if np.random.rand() > 1 - training_factor:
             highest_prob_action = np.random.randint(len(probs))
+        else:
+            highest_prob_action = np.random.choice(
+                self.num_actions, p=np.squeeze(numpy_probs)
+            )
+        log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
+
         highest_prob_value = None
         mini_action, _, _ = get_action_type(
             highest_prob_action, self.num_actions, self.actions, self.match_max_size
         )
-        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
 
         if len(mini_action.split("value")) > 1:
             highest_prob_value = "value"
@@ -312,6 +384,8 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 
 def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=55):
+    flatten = lambda list_list: [item for sublist in list_list for item in sublist]
+
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
     added_info_size_knn = (model.match_max_size + 1) * (6 + 1)
@@ -328,17 +402,21 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=5
     turn_flag = 0
     training_factor = 0.50
     for epoch in range(num_epochs):
-        if epoch < 2:
-            temper = 1
+        if epoch % 3 == 0 and epoch > 1:
+            for g in model.optimizer.param_groups:
+                g['lr'] *= 0.5
+
+        if epoch < 1:
+            temper = 0.5
             print(temper)
         else:
             temper = 1
 
         pbar_file = sys.stdout
-        num_batchs = 150
+        num_batchs = 200
         with tqdm.tqdm(total=num_batchs, file=pbar_file) as pbar:
             in_round_count = 0
-            for index in range(epoch, len(model.data), int(model.window_size / 9)):
+            for index in range(epoch, len(model.data), len(model.data) // num_batchs):
                 in_round_count += 1
                 if in_round_count % round_number == 0:
                     turn_flag = 1 - turn_flag
@@ -461,8 +539,24 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=5
                                 reward = -1
 
                             real_rewards.append(reward)
-                            pattern_copy = (data[-added_info_size:]).detach().cpu().numpy().reshape(1,-1)
-                            rating = model.knn.predict(pattern_copy).item()
+
+
+
+                            predict_pattern = None
+                            for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
+                                arr = arr.copy()
+                                temp_pd = model.list_of_dfs[arr_index].copy()
+                                arr += ["Nan"] * (len(temp_pd) - len(arr))
+                                arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
+                                to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
+
+                                if predict_pattern is None:
+                                    predict_pattern = to_add
+                                else:
+                                    predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
+                                # print(predict_pattern)
+
+                            rating = model.knn.predict(predict_pattern).item()
                             if ball_patterns(events):
                                 rewards.append(-5)
                                 print("ball pattern!")
@@ -472,9 +566,9 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=5
                             if reward == 0:
                                 rewards.append(-1.5)
                                 break
-                            # if 1:
-                            #     if len(np.unique(events)) == 1 and len(events) >= 3:
-                            #         rating = -0.1
+                            if 1:
+                                if len(np.unique(events)) == 1 and len(events) >= 3:
+                                    rating = -0.1
                             if len(actions) > 1:
                                 rating -= (model.knn_avg - 1)
                             else:
@@ -494,9 +588,9 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=5
                 if epoch == 0 and in_round_count < 30 :
                     send_rewards = rewards
                 elif turn_flag == 0:
-                    send_rewards = ratings
-                else:
                     send_rewards = real_rewards
+                else:
+                    send_rewards = ratings
                 if in_round_count % 200 == 0:
                     update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, flag=True)
                 else:
@@ -585,7 +679,7 @@ def train(model, num_epochs=15, test_epcohs=False, round_number=75, temp_given=5
 
             # if not os.path.exists("temper_graphs/temp_" + str(temp_given)):
             #     os.mkdir("temper_graphs/temp_" + str(temp_given) + "/")
-            plt.savefig(str(len(real)))
+            plt.savefig("Graphs/" + str(len(real)))
             plt.show()
 
 
