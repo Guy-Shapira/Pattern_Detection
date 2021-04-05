@@ -294,7 +294,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
-def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps):
+def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param actions: all actions the model suggested
@@ -304,25 +304,18 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     :param cols: system columns- attributes
     :param conds: all and / or relations
     :param all_comps: compare to what event in match
+    :param max_time: max time (in seconds) for pattern duration (time from first event to last event)
     :return: the condition of the pattern created
     """
     cols_rep = []
     [cols_rep.append(cols) for i in range(len(actions))]
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
-    # print(build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps))
-    test1 = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
-    # print(f"A: {test1}")
-    # print(f"B: {test1[0]}")
-    # print(*test1)
-    # print(SeqOperator(*test1))
-    # print(SeqOperator([PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]))
-    # input("next")
-
+    all_events = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
     pattern = Pattern(
-        SeqOperator(*test1),
+        SeqOperator(*all_events),
         build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
-        timedelta(seconds=7),
+        timedelta(seconds=max_time),
     )
     run_OpenCEP(str(index), [pattern])
     return pattern
@@ -364,115 +357,18 @@ def run_OpenCEP(
     return running_time
 
 
-def to_var(x):
-    if torch.cuda.is_available():
-        x = x.cuda()
-    return Variable(x)
 
 
-def get_event_type(event):
-    return chr(ord("A") + event)
-
-
-def mapping(num_events, value):
-    # adding "not" support and value support, this value support must!!!! be changed
-    # TODO: change model.value_option in a way that this mapping wont be hardcoded!
-    if value >= num_events * 8:
-        value, kind_of_action = mapping(num_events, value - num_events * 8)
-        if kind_of_action != "nop":
-            kind_of_action = "v" + kind_of_action + " value"
-    elif value >= num_events * 4:
-        value, kind_of_action = mapping(num_events, value - num_events * 4)
-        if kind_of_action != "nop":
-            kind_of_action = "not " + kind_of_action
-    else:
-        help_map = {i: chr(ord("A") + i) for i in range(num_events)}
-        if value < num_events:
-            kind_of_action = "nop"
-        elif value < 2 * num_events:
-            kind_of_action = "<"
-        elif value < 3 * num_events:
-            kind_of_action = ">"
-        else:
-            kind_of_action = "="
-        value %= num_events
-        value = help_map.get(value)
-    return value, kind_of_action
-
-
-
-def pattern_complexity(events, actions, comp_values, conds, max_events, max_ops, num_cols):
+def new_mapping(event, events,  reverse=False):
     """
-    TODO: rebuild this function!
-    This function is meant to determine the complexity of a pattern encouraging the model to predict complex
-    patterns (long, include many events and comparison with values)
-    :param events: all actions predicted
-    :param actions: all action types predicted (none, <, =, >, not on op, op with value)
-    :param comp_values: values to be compared with, this param should be changed
-    :param cons: list of ANDs & ORs desicions
-    :param max_events: maximum number of different events that can be predicted (used for normalization)
-    :param max_ops: maximum number of different operations that can be predicted (used for normalization)
-    :param num_cols: the number of columns the modle works on
-    :return: the complexity of the given pattern
-    """
-    result = 1
-    ops_per_col = [0] * num_cols
-    for sublist in actions:
-        for i, op in enumerate(sublist):
-            if not op == 'nop':
-                ops_per_col[i] += 1
-
-    num_events = len(events)
-    flatten = lambda list_list: [item for sublist in list_list for item in sublist]
-
-    flat_actions = flatten(actions)
-    flat_values = flatten(comp_values)
-    flast_conds = flatten(conds)
-    num_ops = sum([i != "nop" for i in flat_actions])
-    num_comps = sum([i != "nop" for i in flat_values])
-    num_ands = sum([i == "and" for i in flast_conds])
-    num_ors = sum([i == "or" for i in flast_conds])
-    num_unique_events = len(np.unique(events))
-    num_unique_events_vals = len(np.unique(flat_values))
-    num_actions = num_ops - num_comps
-    if num_ors > num_ands:
-        result += num_ands * 0.1
-        result -= num_ors * 0.1
-    result += num_actions * 0.1
-    result += max(ops_per_col) * 0.2
-    print(f"max_ops_col={max(ops_per_col)}")
-    if num_ands + num_ors > 8:
-        result -= 0.5
-    result *= num_unique_events
-    result += num_unique_events_vals * 0.1
-    if num_events > 3 and num_unique_events == 1:
-        return -0.0001
-    else:
-        unique, counts = np.unique(events, return_counts=True)
-        if max(counts) > 5:
-            return -0.1
-        if max(counts) > 3:
-            return -0.001
-
-    print(result)
-    return result
-
-
-def new_mapping(event, reverse=False):
-    """
-    This should be replaced by real mapping!
+    :param events: all events in the steam
     :param event: model's tagged event
     :return: the actual event
     """
-    values = [98,  69,  19,  67,  66,  75,  65,  40,  47,  64,  44,  59,  68,
-       106,  61,  49,  28,  99,  38,  58,  54, 100, 105,  73,  16,  97,
-        14,  53,  23,  24,  74,  88,  63,  13,  71,  57,  62,  52,   8,
-        10,   4]
-
     if reverse:
-        return values.index(int(event))
+        return (np.where(events == int(event))[0][0])
     else:
-        return values[event]
+        return events[event]
 
 
 def get_action_type(mini_action, total_actions, actions, match_max_size):
@@ -515,24 +411,6 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
 
     return action, cond, comp_to
 
-
-    # total_actions_real = (total_actions - 1) // 2
-    # if mini_action > total_actions_real:
-    #     cond = "and"
-    #     min, _ = get_action_type(mini_action - total_actions, total_actions, actions)
-    # else:
-    #     cond = "or"
-    # if mini_action == total_actions_real:
-    #     return "nop", cond
-    # else:
-    #     mini = actions[mini_action % len(actions)]
-    #     if mini_action >= len(actions) * 3:
-    #         mini = "v" + mini + " value"
-    #     elif mini_action >= len(actions) * 2:
-    #         mini = "not " + mini
-    # return mini, cond
-
-
 def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
     str_pattern = ""
     for event_index in range(len(events)):
@@ -572,14 +450,12 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
             str_pattern += " AND "
 
     return simplify_pattern(str_pattern)
-    # return str_pattern
 
 
 def simplify_pattern(str_pattern):
     sub_patterns = str_pattern.split(" AND ")
 
     for i, sub_pattern in enumerate(sub_patterns):
-        # print(f" Before {sub_pattern}")
         if sub_pattern.endswith(" and "):
             sub_pattern = sub_pattern[:-5]
         elif sub_pattern.endswith(" or "):
@@ -591,7 +467,6 @@ def simplify_pattern(str_pattern):
         sub_pattern = sub_pattern.replace("T or ", "")
         sub_pattern = sub_pattern.replace(" or T", "")
         sub_patterns[i] = sub_pattern
-        # print(f" After {sub_pattern}")
 
     simple_str = ""
     for sub_pattern in sub_patterns:
@@ -600,9 +475,7 @@ def simplify_pattern(str_pattern):
 
     if simple_str.endswith(" AND "):
         simple_str = simple_str[:-5]
-    # print(simple_str)
     return simple_str
-
 
 
 
@@ -628,12 +501,7 @@ def set_values(comp_vals, cols, mini_actions, event, conds, file):
     headers = ["event", "ts"] + cols
     new_comp_vals = []
     df = pd.read_csv(file, names=headers)
-    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    # df.drop(columns=["ts", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    # df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
     df.drop(columns=["ts", "vz", "ax", "ay", "az"], inplace=True)
-    # df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
     df = df.loc[df['event'] == event]
     for action, val, col in zip(mini_actions, comp_vals, df.columns[1:]):
         if not val == "nop":
@@ -694,8 +562,8 @@ def ball_patterns(events):
     return False
 
 
-def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets):
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets"]
+def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine):
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine"]
     NAMES = [name + ".txt" for name in NAMES]
     TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets]
     for file_name, file_content in zip(NAMES, TO_WRITE):
@@ -709,8 +577,10 @@ def set_values_bayesian(comp_vals, cols, mini_actions, event, conds, file, max_v
     headers = ["event", "ts"] + cols
     return_dict = {}
     df = pd.read_csv(file, names=headers)
+    print(df)
+    print(df.columns)
     # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    df.drop(columns=["ts", "ax", "ay", "az"], inplace=True)
+    df.drop(columns=["ts", "vz", "ax", "ay", "az"], inplace=True)
     df = df.loc[df['event'] == event] # todo, try to remove
     count = 0
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
@@ -736,16 +606,9 @@ def set_values_bayesian2(comp_vals, max_values, min_values):
 
 
 
-# assumes index is in index.txt
-# actions in actions.txt
-# action_types int action_type.txt
-# comp_values int comp_values.txt
-# cols int cols.txt
-# conds int conds.txt
-def bayesian_function(**values):
-    # read comp_vals, create new_comp_vals using values
 
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets"]
+def bayesian_function(**values):
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine"]
     NAMES = [name + ".txt" for name in NAMES]
     TO_READ = [[] for _ in range(len(NAMES))]
     for i, name in enumerate(NAMES):
@@ -760,6 +623,7 @@ def bayesian_function(**values):
     conds = TO_READ[5]
     new_comp_vals = TO_READ[6]
     targets = TO_READ[7]
+    max_fine = TO_READ[8]
     count = 0
     to_return_comp_vals = []
 
@@ -782,6 +646,6 @@ def bayesian_function(**values):
 
     with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
         reward = int(f.read().count("\n") / (len(actions) + 1))
-        if reward > 55: #this is a const param that is attribute of model
+        if reward > max_fine:
             reward = 1
         return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0
