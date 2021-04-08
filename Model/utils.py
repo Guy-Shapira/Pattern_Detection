@@ -15,8 +15,6 @@ from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
 from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
-
-# from plugin.ToyExample.Toy import DataFormatter
 from plugin.Football.Football_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
@@ -33,30 +31,6 @@ from adaptive.optimizer.OptimizerFactory import OptimizerParameters
 from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
-
-# #
-# from base.Formula import (
-#     GreaterThanFormula,
-#     SmallerThanFormula,
-#     SmallerThanEqFormula,
-#     GreaterThanEqFormula,
-#     MulTerm,
-#     EqFormula,
-#     IdentifierTerm,
-#     AtomicTerm,
-#     AndFormula,
-#     TrueFormula,
-#     NotEqFormula,
-#     OrFormula,
-#
-# )
-# from base.PatternStructure import (
-#     AndOperator,
-#     SeqOperator,
-#     PrimitiveEventStructure,
-#     NegationOperator,
-# # )
-# from base.Pattern import Pattern
 from datetime import timedelta
 import csv
 import pickle
@@ -66,15 +40,6 @@ absolutePath = str(currentPath.parent)
 sys.path.append(absolutePath)
 
 INCLUDE_BENCHMARKS = False
-# DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismParameters(
-#     TreePlanBuilderParameters(
-#         TreePlanBuilderTypes.TRIVIAL_LEFT_DEEP_TREE,
-#         TreeCostModels.INTERMEDIATE_RESULTS_TREE_COST_MODEL,
-#     ),
-#     TreeStorageParameters(
-#         sort_storage=False, clean_up_interval=10, prioritize_sorting_by_timestamp=True
-#     ),
-# )
 
 DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismParameters(
     optimizer_params=OptimizerParameters(opt_type=OptimizerTypes.TRIVIAL_OPTIMIZER,
@@ -99,12 +64,8 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
     :param comp_target: what event to compate to
     :return: the next part of the formula
     """
-    # This is dumb, but for now:
     if comp_target != "value":
-        # if comp_target == "":
-            # print(f"Comp FUCK")
-            # print(f"action {action_type}")
-            # print(f"Comp FUCK")
+
         if bindings[0] == chr(ord("a") + comp_target):
             return TrueCondition() # cant compare to itself
         elif comp_target >= curr_len:
@@ -113,7 +74,7 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
             try:
                 bindings[1] = chr(ord("a") + comp_target)
             except Exception as e:
-                # end op list
+                # end of list
                 return TrueCondition()
 
     # try:
@@ -225,7 +186,7 @@ def build_event_formula(bind, curr_len, actions, comps, cols, conds, targets, is
     num_comps_remaining = sum([i != "nop" for i in comps])
     if num_comps_remaining == 0 and num_ops_remaining == 0:
         return TrueCondition()
-    if is_last:  #TODO: remove this, for now need to change to if 0
+    if is_last:
         if num_comps_remaining == 0:
             return TrueCondition()
         elif comps[0] == "nop":
@@ -266,12 +227,12 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
     """
     Build the condition formula of the pattern
     :param bindings: All bindings (events as symbols)
-    :param curr_len: the match number of events
-    :param action_types: all action type (comparison with next, comparison with value, ect.)
+    :param curr_len: the number of events in pattern
+    :param action_types: all action types (comparison with other attribute, comparison with value, ect.)
     :param comp_values: all the values to compare with
-    :param cols: system attributes
+    :param cols: the attributes the model predict conditions on
     :param conds: and/or relations
-    :param all_comps: compare to what event in match
+    :param all_comps: list of comparison targets (e.g. second event in pattern, value)
     :return: The formula of the pattern
     """
     if len(bindings) == 1:
@@ -298,12 +259,12 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param actions: all actions the model suggested
-    :param action_types: all action type (comparison with next, comparison with value, ect.)
+    :param action_types: all action types (comparison with other attribute, comparison with value, ect.)
     :param index: episode number
     :param comp_values: all the values to compare with
-    :param cols: system columns- attributes
+    :param cols: the attributes the model predict conditions on
     :param conds: all and / or relations
-    :param all_comps: compare to what event in match
+    :param all_comps: list of comparison targets
     :param max_time: max time (in seconds) for pattern duration (time from first event to last event)
     :return: the condition of the pattern created
     """
@@ -321,9 +282,7 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     return pattern
 
 
-def after_epoch_test(
-    pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS
-):
+def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS):
     cep = CEP([pattern], eval_mechanism_params)
     events = FileInputStream(os.path.join(absolutePath, "Data", "test_data_stream.txt"))
     base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
@@ -359,10 +318,11 @@ def run_OpenCEP(
 
 
 
-def new_mapping(event, events,  reverse=False):
+def new_mapping(event, events, reverse=False):
     """
-    :param events: all events in the steam
     :param event: model's tagged event
+    :param events: all events in the stream
+    :param reverse: flag that indicates if we want event value or index in list
     :return: the actual event
     """
     if reverse:
@@ -379,7 +339,8 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     :param total_actions:
     :param actions:
     :param match_max_size: max len of match pattern
-    :return:
+    :return: tuple of (type, cond, target), where type is an action from param-actions,
+    cond is in {and, or}, and target is in {"", value, event_i (for i in [0, max_match_size])}
     """
     not_flag = False
     if mini_action == total_actions:
@@ -412,6 +373,23 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     return action, cond, comp_to
 
 def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
+    """
+    helper method that creates a string that describes the suggested pattern,
+    deatiling it's events and conditions
+    :param events: list of ther events that appear in the patterns
+    :param actions: list of lists, the i-th inner list details the conditions on
+    the attributes of i-th event in the pattern
+    :param comp_val: list of lists, the i-th inner lists details the value that
+    were chosen for comparisons with attributes of the i-th event in the pattern
+    :param conds: list of lists, the i-th inner lists details the or/and relations
+    that appears between conditions on attributes of the i-th event in the pattern
+    :param cols: list of attributes the model works on
+    :param comp_target: list of lists, the i-th inner lists details the comparison targets
+    (values or event index) that were chosen for comparisons with attributes of
+    the i-th event in the pattern
+    :return: string that describes the pattern and it's components
+    """
+
     str_pattern = ""
     for event_index in range(len(events)):
         event_char = chr(ord("a") + event_index)
@@ -453,6 +431,12 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
 
 
 def simplify_pattern(str_pattern):
+    """
+    helper method to remove irrelavent parts from pattern-str
+    :param str_pattern: output of (old) create_pattern_str function
+    :return: a modified string where tautology parts are removed
+    (e.g. A and (T and T) -> A)
+    """
     sub_patterns = str_pattern.split(" AND ")
 
     for i, sub_pattern in enumerate(sub_patterns):
@@ -479,46 +463,6 @@ def simplify_pattern(str_pattern):
 
 
 
-def store_patterns_and_rating_to_csv(pattern, user_rating, events, str_pattern):
-    pattern_copy = pattern.detach().numpy()
-    pattern_copy = [str(i) for i in pattern_copy]
-    pattern_copy = ','.join(pattern_copy)
-    if not os.path.isfile("Patterns/pattern7.csv"):
-        modifier = "w"
-    else:
-        modifier = "a"
-    with open("Patterns/pattern7.csv", modifier) as csv_file:
-        writer = csv.writer(csv_file)
-        if modifier == "w":
-            writer.writerow(["pattern", "rating", "events", "pattern_str"])
-        writer.writerow([pattern_copy, user_rating, events, str_pattern])
-
-
-def set_values(comp_vals, cols, mini_actions, event, conds, file):
-    """
-    in future must use conds!
-    """
-    headers = ["event", "ts"] + cols
-    new_comp_vals = []
-    df = pd.read_csv(file, names=headers)
-    df.drop(columns=["ts", "vz", "ax", "ay", "az"], inplace=True)
-    df = df.loc[df['event'] == event]
-    for action, val, col in zip(mini_actions, comp_vals, df.columns[1:]):
-        if not val == "nop":
-            best = -1
-            max = 0
-            for candidate in df[col]:
-                match = match_condition(action, df, col, candidate)[0]
-                if match > max:
-                    max = match
-                    best = candidate
-            new_comp_vals.append(best)
-        else:
-            new_comp_vals.append("nop")
-    return new_comp_vals
-
-
-
 def replace_values(comp_vals, selected_values):
     count = 0
     new_comp_vals = []
@@ -529,26 +473,6 @@ def replace_values(comp_vals, selected_values):
         else:
             new_comp_vals.append("nop")
     return new_comp_vals
-
-
-
-def match_condition(op, df, col, value):
-    if op == "<":
-        return df[df[col] < value].count()
-    elif op == ">":
-        return df[df[col] > value].count()
-
-    elif op == "=":
-        return df[df[col] == value].count()
-
-    elif op == "not <":
-        return df[~(df[col] < value)].count()
-
-    elif op == "not >":
-        return df[~(df[col] > value)].count()
-
-    else:  # op == "not ="
-        return df[~(df[col] == value)].count()
 
 
 def ball_patterns(events):
@@ -562,10 +486,24 @@ def ball_patterns(events):
     return False
 
 
-def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine):
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine"]
+def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time):
+    """
+    stores relavent info to txt files
+    :param actions: list of actions (events)
+    :param action_type: list of list, the i-th inner list contains the mini-actions of the i-th event in the pattern
+    :param index: index of window in data
+    :param comp_values: list of list, the i-th inner list contains the comparison values of the i-th event in the pattern
+    :param cols: list of attributes the model works on
+    :param new_comp_vals: same as comp_values but for the latests event in pattern
+    :param conds: list of list, the i-th inner list contains the conds (and/or) of the i-th event in the pattern
+    :param targets: list of list, the i-th inner list contains the comparison targets of the i-th event in the pattern
+    :param max_fine: max leagal appearances of pattern in a single window
+    :param max_time: max length (time wise) of pattern
+    :return: has no return value
+    """
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time"]
     NAMES = [name + ".txt" for name in NAMES]
-    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets]
+    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time]
     for file_name, file_content in zip(NAMES, TO_WRITE):
         with open(file_name, 'wb') as f:
             pickle.dump(file_content, f)
@@ -573,14 +511,25 @@ def store_to_file(actions, action_types, index, comp_values, cols, conds, new_co
 
 
 
-def set_values_bayesian(comp_vals, cols, mini_actions, event, conds, file, max_values, min_values):
+def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, file, max_values, min_values):
+    """
+    finds ranges for bayesian serach
+    :param comp_vals: list of values for comparison with attributes of the last event of the pattern
+    :param cols: list of all attributes in data
+    :param eff_cols: list of attributes the model works on
+    :param mini_actions: list of conditions on the last event of the pattern
+    :param event: last event of the pattern
+    :param conds: list, contains the conds (and/or) of the last event of the pattern
+    :param file: path to the data of the current window
+    :param max_values: list of maximum leagl values to chose values from
+    :param min_values: list of minimum leagl values to chose values from
+    :return: list of ranges for eache bayesian serach
+    """
     headers = ["event", "ts"] + cols
     return_dict = {}
     df = pd.read_csv(file, names=headers)
-    print(df)
-    print(df.columns)
-    # df.drop(columns=["ts", "vx", "vy", "vz", "ax", "ay", "az"], inplace=True)
-    df.drop(columns=["ts", "vz", "ax", "ay", "az"], inplace=True)
+    keep_cols = eff_cols + ["event"]
+    df = df[keep_cols]
     df = df.loc[df['event'] == event] # todo, try to remove
     count = 0
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
@@ -594,21 +543,14 @@ def set_values_bayesian(comp_vals, cols, mini_actions, event, conds, file, max_v
     return return_dict
 
 
-def set_values_bayesian2(comp_vals, max_values, min_values):
-    return_dict = {}
-    count = 0
-    for col, val in enumerate(comp_vals):
-        if not val == "nop":
-            return_dict.update({"x_" + str(count): (min_values[col] + 1, max_values[col] - 1)})
-            count += 1
-
-    return return_dict
-
-
 
 
 def bayesian_function(**values):
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine"]
+    """
+    list of values to do bayesian serach on, each value has it's predefined range
+    :return: chosen value to compare with for each comparison with value in the pattern
+    """
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time"]
     NAMES = [name + ".txt" for name in NAMES]
     TO_READ = [[] for _ in range(len(NAMES))]
     for i, name in enumerate(NAMES):
@@ -624,6 +566,7 @@ def bayesian_function(**values):
     new_comp_vals = TO_READ[6]
     targets = TO_READ[7]
     max_fine = TO_READ[8]
+    max_time = TO_READ[9]
     count = 0
     to_return_comp_vals = []
 
@@ -640,7 +583,7 @@ def bayesian_function(**values):
 
     # calls run_OpenCEP
     pattern = OpenCEP_pattern(
-        actions, action_types, index, try_comp_vals, cols, conds, targets
+        actions, action_types, index, try_comp_vals, cols, conds, targets, max_time
     )
     # checks and return output
 

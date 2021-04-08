@@ -9,12 +9,9 @@ from Model.utils import (
     new_mapping,
     get_action_type,
     create_pattern_str,
-    store_patterns_and_rating_to_csv,
-    set_values,
     ball_patterns,
     bayesian_function,
     set_values_bayesian,
-    set_values_bayesian2,
     store_to_file,
     replace_values,
 )
@@ -62,6 +59,7 @@ class ruleMiningClass(nn.Module):
     ):
         super().__init__()
         self.actions = [">", "<", "=", "+>", "->", "*="]
+        # self.actions = [">", "<", "=", "+>", "->", "*]
         self.events = np.loadtxt(events_path, dtype='int')
         self.num_events = len(self.events)
         self.match_max_size = match_max_size
@@ -234,6 +232,10 @@ class ruleMiningClass(nn.Module):
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
         if np.random.rand() > 1 - training_factor:
             action = np.random.randint(len(mask))
+        if index % 50 == 0:
+            print(probs)
+            # print(log_prob)
+            # sleep(1)
 
         log_prob = torch.log(probs.squeeze(0)[action])
         if abs(log_prob) < 0.1:
@@ -255,7 +257,6 @@ class ruleMiningClass(nn.Module):
                 self.num_actions, p=np.squeeze(numpy_probs)
             )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
-
         highest_prob_value = None
         mini_action, _, _ = get_action_type(
             highest_prob_action, self.num_actions, self.actions, self.match_max_size
@@ -342,7 +343,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
     total_best = -1
-
+    best_found = {}
     results, all_rewards, numsteps, avg_numsteps, mean_rewards, real, mean_real, rating_plot, all_ratings, factor_results = (
         [],
         [],
@@ -355,31 +356,35 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
         [],
         [],
     )
+    max_rating = []
     entropy_term, turn_flag = 0, 0
     training_factor = 0.50
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
-    total_count = -26
+    total_count = -25
+
     for epoch in range(num_epochs):
-        if epoch % 3 == 0 and epoch > 1:
+        if epoch > 1:
             for g in model.optimizer.param_groups:
-                g['lr'] *= 0.5
+                g['lr'] *= 0.85
 
         if epoch < 1:
             temper = 0.5
         else:
             temper = 1
+            # temper = max(1, int(temper/2 + 0.5))
 
         with tqdm.tqdm(total=bs, file=pbar_file) as pbar:
             in_round_count = 0
             for index in range(epoch, len(model.data), len(model.data) // bs):
-                if total_count == bs:
+                if total_count >= bs:
                     total_count = 0
                     turn_flag = 1 - turn_flag
 
                 if total_count == switch_flag:
                     turn_flag = 1 - turn_flag
-
+                if in_round_count >= bs:
+                    break
                 total_count += 1
                 in_round_count += 1
                 data = model.data[index]
@@ -406,6 +411,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                     [],
                     [],
                 )
+                normalize_rating, normalize_reward = [], []
                 mask = torch.tensor([1.0] * (model.num_events + 1))
                 if in_round_count % 35 == 0 and epoch < 5:
                     temper /= 1.05
@@ -435,6 +441,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                         else:
                             log_probs.append(log_prob)
                             rewards.append(10)
+                            real_rewards.append(10)
                             break
                     else:
                         event = new_mapping(action, model.events)
@@ -460,11 +467,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
 
                         if comp_vals.count("nop") != len(comp_vals):
                             bayesian_dict = set_values_bayesian(comp_vals,
-                                model.all_cols, mini_actions, event,
+                                model.all_cols, model.cols, mini_actions, event,
                                 all_conds, file, model.max_values_bayes,
                                 model.min_values_bayes
                              )
-                            store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app)
+                            store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app, model.max_time)
                             b_optimizer = BayesianOptimization(
                                 f=bayesian_function,
                                 pbounds=bayesian_dict,
@@ -473,10 +480,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                             )
                             try:
                                 b_optimizer.maximize(
-                                    init_points=5,
-                                    n_iter=5,
+                                    init_points=2,
+                                    n_iter=3,
                                 )
-
                                 selected_values = list(b_optimizer.max['params'].values())
                             except Exception as e:
                                 # empty range, just use min to max values as range instade
@@ -510,23 +516,32 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                                     predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
                             rating = model.knn.predict(predict_pattern).item()
-                            if ball_patterns(events):
-                                rewards.append(-5)
-                                print("ball pattern!")
-                                break
                             ratings.append(rating)
-                            if reward == 0:
-                                rewards.append(-1.5)
-                                break
-                            if 1:
-                                if len(np.unique(events)) == 1 and len(events) >= 3:
-                                    rating = -0.1
                             if len(actions) > 1:
                                 rating -= (model.knn_avg - 0.5)
                             else:
                                 rating = 1
+                            normalize_rating.append(rating)
+
+                            if ball_patterns(events):
+                                rewards.append(-5)
+                                normalize_reward.append(-25)
+                                print("ball pattern!")
+                                break
+                            if reward == 0:
+                                normalize_reward.append(-25)
+                                rewards.append(-1.5)
+                                break
+                            normalize_reward.append(reward - 20)
                             reward *= rating
                             rewards.append(reward)
+                            if len(best_found) < 10:
+                                best_found.update({reward: pattern})
+                            else:
+                                worst_reward = sorted(list(best_found.keys()))[0]
+                                if reward > worst_reward:
+                                    del best_found[worst_reward]
+                                    best_found.update({reward: pattern})
 
 
                     if count >= model.match_max_size:
@@ -547,34 +562,37 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 else:
                     update_policy(model, send_rewards, log_probs, values, Qval, entropy_term)
 
+
+                index_max = np.argmax(rewards)
                 all_ratings.append(np.sum(ratings))
-                all_rewards.append(np.sum(rewards))
+                all_rewards.append(rewards[index_max])
                 numsteps.append(len(actions))
                 avg_numsteps.append(np.mean(numsteps))
                 mean_rewards.append(np.mean(all_rewards))
-                real.append(np.max(real_rewards))
-                rating_plot.append(np.max(ratings))
+                max_rating.append(np.max(ratings))
+                real.append(real_rewards[index_max])
+                rating_plot.append(ratings[index_max])
                 mean_real.append(np.mean(real_rewards))
-                index_max = np.argmax(real_rewards)
-                sys.stdout.write(
-                    "Real reward : {}, Rating {},  comparisons : {}\n".format(
-                        real_rewards[index_max],
-                        ratings[index_max],
-                        sum([t != "nop" for sub in comp_values for t in sub]),
+
+                if 0:
+                    sys.stdout.write(
+                        "Real reward : {}, Rating {},  comparisons : {}\n".format(
+                            real_rewards[index_max],
+                            ratings[index_max],
+                            sum([t != "nop" for sub in comp_values for t in sub]),
+                        )
                     )
-                )
-                if 1:
                     str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                     sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern} index = {index}\n")
-                sys.stdout.write(
-                    "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
-                        in_round_count,
-                        index,
-                        np.round(np.mean(rewards), decimals=3),
-                        np.round(np.mean(all_rewards), decimals=3),
-                        len(actions),
+                    sys.stdout.write(
+                        "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
+                            in_round_count,
+                            index,
+                            np.round(rewards[index_max], decimals=3),
+                            np.round(np.mean(all_rewards), decimals=3),
+                            len(actions),
+                        )
                     )
-                )
                 if model.count > 15:
                     print("\n\n\n---- Stopping early because of low log ----\n\n\n")
                     model.count = 0
@@ -586,6 +604,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
             rating_groups = [
                 np.mean(rating_plot[t : t + GRAPH_VALUE])
                 for t in range(0, len(rating_plot), GRAPH_VALUE)
+            ]
+            max_ratings_group = [
+                np.mean(max_rating[t: t + GRAPH_VALUE])
+                for t in range(0, len(max_rating), GRAPH_VALUE)
             ]
             real_groups = [
                 np.mean(real[t : t + GRAPH_VALUE])
@@ -621,9 +643,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
             plt.xticks(locations, labels)
 
             ax2.scatter(locations, rating_groups, c="g")
+            ax2.scatter(locations, max_ratings_group, c="r")
             ax2.plot()
             str_split_factor = str(split_factor * 100) + "%"
-            plt.savefig("Graphs/" + str(len(real)) + "_" + str_split_factor + ".pdf")
+            if not os.path.exists(f"Graphs/{str_split_factor}/"):
+                os.mkdir(f"Graphs/{str_split_factor}/")
+            plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}.pdf")
             plt.show()
             factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
@@ -806,7 +831,7 @@ def is_pareto_efficient(costs):
     is_efficient = np.ones(len(costs), dtype = bool)
     for i, c in enumerate(costs):
         if is_efficient[i]:
-            is_efficient[is_efficient] = np.any(costs[is_efficient]<c, axis=1)  # Keep any point with a lower cost
+            is_efficient[is_efficient] = np.any(costs[is_efficient] < c, axis=1)  # Keep any point with a lower cost
             is_efficient[i] = True  # And keep self
     return is_efficient
 
@@ -822,7 +847,9 @@ def main(parser):
     data = None
     first = True
     suggested_models = []
-    for split_factor in [0.3, 0.4, 0.5, 0.6]:
+    all_patterns = []
+    for split_factor in range(50, 75, 5):
+        eff_split_factor = split_factor / 100
         class_inst = ruleMiningClass(data_path=args.data_path,
                                     pattern_path=args.pattern_path,
                                     events_path=args.events_path,
@@ -841,14 +868,21 @@ def main(parser):
             first = False
         else:
             class_inst.data = data
-        results.update({split_factor: train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=split_factor)})
+
+        result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor)
+        all_patterns.append(patterns)
+        print(patterns)
+        results.update({split_factor: result})
         suggested_models.append({split_factor: class_inst})
     print(results)
     pareto_results = np.array(list(results.values()))
+    pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
+    print(pareto_results)
     patero_results = is_pareto_efficient(pareto_results)
-    for patero_res, model in zip(patero_results, suggested_models):
+    for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
         if patero_res:
             print(model)
+            print(patterns)
 
 
 
@@ -856,7 +890,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=1e-6, type=int, help='starting learning rate')
+    parser.add_argument('--lr', default=1e-5, type=float, help='starting learning rate')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--max_fine_app', default=55, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=7, type=int, help='maximum time for pattern (seconds)')
@@ -864,10 +898,10 @@ if __name__ == "__main__":
     parser.add_argument('--num_events', default=41,type=int, help='number of unique events in data')
     parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
     parser.add_argument('--events_path', default='Football/events', help='path to list of events')
-    parser.add_argument('--pattern_path', default='Patterns/pattern14.csv', help='path to known patterns')
+    parser.add_argument('--pattern_path', default='Patterns/pattern15.csv', help='path to known patterns')
     parser.add_argument('--max_vals', default = "97000, 100000, 15000, 20000, 20000, 20000", type=str, help="max values in columns")
     parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
     parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
     parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")
-    torch.set_num_threads(30)
+    torch.set_num_threads(50)
     main(parser)
