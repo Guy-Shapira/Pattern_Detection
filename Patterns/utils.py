@@ -34,8 +34,8 @@ from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
 
-CSV_PATH = "Patterns/pattern14_temp.csv"
-CSV_PATH_FINAL = "Patterns/pattern14.csv"
+CSV_PATH = "Patterns/check.csv"
+CSV_PATH_FINAL = "Patterns/check_after.csv"
 
 # #
 # from base.Formula import (

@@ -58,8 +58,10 @@ class ruleMiningClass(nn.Module):
         init_flag=False,
     ):
         super().__init__()
-        self.actions = [">", "<", "=", "+>", "->", "*="]
+        # self.actions = [">", "<", "=", "+>", "->", "*="]
+        self.actions = [">", "<", "="]
         # self.actions = [">", "<", "=", "+>", "->", "*]
+        self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
         self.events = np.loadtxt(events_path, dtype='int')
         self.num_events = len(self.events)
         self.match_max_size = match_max_size
@@ -70,25 +72,34 @@ class ruleMiningClass(nn.Module):
         self.embedding_values = [nn.Embedding(max_val, 3) for max_val in max_values]
         if init_flag:
             self.data = self._create_data(data_path)
+            # print(self.data.shape)
+            # exit()
             self.data = self.data.view(len(self.data), -1)
-        self.hidden_size = 4096
+        self.hidden_size1 = 50 * 32
+        self.hidden_size2 = 4096
         self.num_cols = num_cols
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
         self.linear_base = nn.Linear(
             self.window_size * EMBDEDDING_TOTAL_SIZE + (self.match_max_size + 1)  * (self.num_cols + 1),
-            self.hidden_size,
+            self.hidden_size2,
         ).cuda()
-        self.event_tagger = nn.Linear(self.hidden_size, self.num_events + 1).cuda()
+        # self.linear_base = nn.Linear(
+        #     self.hidden_size1,
+        #     self.hidden_size2,
+        # ).cuda()
+        self.conv1 = nn.Conv1d(self.window_size + 1, 32, kernel_size=3, dilation=2, padding=0, stride=1).cuda()
+        self.bn1 = nn.BatchNorm1d(32).cuda()
+        self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
 
         self.action_layers = nn.ModuleList(
             [
-                nn.Linear(self.hidden_size, self.num_actions)
+                nn.Linear(self.hidden_size2, self.num_actions)
                 for _ in range(self.num_cols)
             ]
         ).cuda()
-        self.critic = nn.Linear(self.hidden_size, 1).cuda()
+        self.critic = nn.Linear(self.hidden_size2, 1).cuda()
 
         self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -170,11 +181,17 @@ class ruleMiningClass(nn.Module):
                 values = values[2:] # skip sid and ts
                 embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
                 embed_values.insert(0, event)
+
                 if data is None:
                     data = torch.cat(tuple(embed_values), 0)
+                    # filler = torch.tensor([PAD_VALUE] * (self.max_predict - len(data)))
+                    # data = torch.cat((data, filler))
                     data = data.unsqueeze(0)
                 else:
                     new_data = torch.cat(tuple(embed_values), 0)
+                    # filler = torch.tensor([PAD_VALUE] * (self.max_predict - len(new_data)))
+                    # new_data = torch.cat((new_data, filler))
+
                     new_data = new_data.unsqueeze(0)
                     data = torch.cat((data, new_data), 0)
 
@@ -215,7 +232,18 @@ class ruleMiningClass(nn.Module):
             masked_sums += zeros.float()
             return masked_exps / masked_sums
 
+        # # print(self.linear_base)
+        # input = self.conv1(input.unsqueeze(0).cuda())
+        # # print(input.shappe)
+        # input = self.bn1(input.cuda())
+        # input = input.flatten()
+        # # print(input)
+        # print(input.shape)
 
+        # input = self.bn1(self.conv1(input.cuda())).flatten()
+
+        # print(input.shape)
+        # print(self.linear_base)
         x = F.relu(self.linear_base(input.cuda()))
 
         value = self.critic(x)
@@ -224,6 +252,7 @@ class ruleMiningClass(nn.Module):
         return event_after_softmax, value
 
     def get_event(self, input, index=0, mask=None, training_factor=0.0, T=1):
+        # print(input.shape)
         probs, value = self.forward(Variable(input), mask, T=T)
         numpy_probs = probs.detach().cpu().numpy()
         action = np.random.choice(
@@ -275,6 +304,10 @@ class ruleMiningClass(nn.Module):
         mini_actions_vals = []
         total_entropy = 0
         comps_to = []
+        # data = self.conv1(data.unsqueeze(0).cuda())
+        # data = self.bn1(data.cuda())
+        # data = data.flatten()
+
         updated_data = self.linear_base(data)
         for i in range(self.num_cols):
             action, value, log, entropy = self.single_col_mini_action(updated_data, i, training_factor) #this is weird, should update data after actions
@@ -327,7 +360,8 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     values = torch.FloatTensor(values)
     Qvals = torch.FloatTensor(Qvals)
     log_probs = torch.stack(log_probs)
-    advantage = Qvals - values
+    # advantage = Qvals - values
+    advantage = Qvals
 
     actor_loss = (-log_probs * advantage).mean()
     critic_loss = 0.5 * advantage.pow(2).mean()
@@ -342,6 +376,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
+    # added_info_size = model.max_predict
     total_best = -1
     best_found = {}
     results, all_rewards, numsteps, avg_numsteps, mean_rewards, real, mean_real, rating_plot, all_ratings, factor_results = (
@@ -390,7 +425,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 data = model.data[index]
                 data_size = len(data)
                 old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
-                data = torch.cat((data, old_desicions.float()), dim=0)
+                # old_desicions = old_desicions.unsqueeze(0)
+                data = torch.cat((data, old_desicions.float()))
                 count = 0
                 best_reward = 0.0
                 pbar.update(n=1)
@@ -516,11 +552,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                                     predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
                             rating = model.knn.predict(predict_pattern).item()
-                            ratings.append(rating)
-                            if len(actions) > 1:
-                                rating -= (model.knn_avg - 0.5)
+                            if len(events) == 1:
+                                ratings.append(rating)
+                                # rating = 1
                             else:
-                                rating = 1
+                                ratings.append(rating)
+                                # rating -= (model.knn_avg - 0.5)
                             normalize_rating.append(rating)
 
                             if ball_patterns(events):
@@ -554,9 +591,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 if total_count <= 0:
                     send_rewards = rewards
                 elif turn_flag == 0:
-                    send_rewards = real_rewards
+                    send_rewards = rewards
                 else:
-                    send_rewards = ratings
+                    send_rewards = rewards
                 if total_count % bs == 0:
                     update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, flag=True)
                 else:
@@ -574,7 +611,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 rating_plot.append(ratings[index_max])
                 mean_real.append(np.mean(real_rewards))
 
-                if 0:
+                if 1:
                     sys.stdout.write(
                         "Real reward : {}, Rating {},  comparisons : {}\n".format(
                             real_rewards[index_max],
@@ -582,15 +619,16 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                             sum([t != "nop" for sub in comp_values for t in sub]),
                         )
                     )
-                    str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-                    sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern} index = {index}\n")
+                    str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
+                     comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
+                    sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern[:index_max + 1]} index = {index}\n")
                     sys.stdout.write(
                         "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
                             in_round_count,
                             index,
                             np.round(rewards[index_max], decimals=3),
                             np.round(np.mean(all_rewards), decimals=3),
-                            len(actions),
+                            index_max,
                         )
                     )
                 if model.count > 15:
@@ -663,7 +701,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
         plt.plot(results, "g")
         plt.show()
 
-    return factor_results[-1]
+    return factor_results[-1], best_found
 
 # def predict_window(model, i, data):
 #     data_size = len(data)
@@ -848,7 +886,9 @@ def main(parser):
     first = True
     suggested_models = []
     all_patterns = []
-    for split_factor in range(50, 75, 5):
+    # for split_factor in range(50, 75, 5):
+    if 1:
+        split_factor = 50
         eff_split_factor = split_factor / 100
         class_inst = ruleMiningClass(data_path=args.data_path,
                                     pattern_path=args.pattern_path,

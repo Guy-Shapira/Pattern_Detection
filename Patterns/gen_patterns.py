@@ -102,7 +102,7 @@ class genDataClass(nn.Module):
 
 
 
-def genData(model, num_epochs=5):
+def genData(model, num_epochs=7):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1) + 1 # need to remove + 1
@@ -116,8 +116,8 @@ def genData(model, num_epochs=5):
 
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:500]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 500 :(epoch + 1) * 500]):
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:600]), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data[epoch * 600 :(epoch + 1) * 600]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
                 # data2 = torch.cat((data, torch.tensor([0] * added_info_size_knn).float()), dim=0)
@@ -190,7 +190,7 @@ def genData(model, num_epochs=5):
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                         if len(events) > 1:
                             pass
-                        sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
+                        # sys.stdout.write(f"Pattern: events = {events}, conditions = {str_pattern}\n")
 
                         user_reward = 1
                         if len(events) == 1:
@@ -223,7 +223,6 @@ def genData(model, num_epochs=5):
                                 num_non_ball = sum([1 if event != 4 else 0 for event in events_ball])
                                 if len(events_ball) >= 5 and num_non_ball <= 2 :
                                     user_reward = np.random.uniform(0.3, 1.3)
-
                         if np.random.randint(5) or (len(all_rewards) > 2000 and user_reward > np.percentile(all_rewards, 70)):
                             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern)
                             all_rewards.append(user_reward)
@@ -242,5 +241,5 @@ def main():
 
 
 if __name__ == "__main__":
-    torch.set_num_threads(10)
+    torch.set_num_threads(30)
     main()
