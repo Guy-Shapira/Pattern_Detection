@@ -2,13 +2,16 @@ import random
 
 
 
-INPUT_FILE = "Football/x00"
-OUTPUT_FILE = "Football/merge_x00_new"
+INPUT_FILE = "Football/game_first_part"
+OUTPUT_FILE = "Football/merge_x00_new1"
 GROUP_SIZE = 125
 BALL_GROUP_SIZE = 1000
 
 BALL = [4,8,10]
-
+SAME_EVENTS = {13 : [13, 14, 97, 98], 47: [47, 16], 49: [49, 88], 19: [19, 52],
+                53: [53, 54], 23: [23, 24], 57: [57, 58], 59: [59, 28], 61: [61, 62, 99, 100],
+                63: [63, 64], 65: [65, 66], 67: [67, 68], 69: [69, 38], 71: [71,40],
+                73: [73, 74], 75: [75, 44], 105: [105, 106], 4: [4], 8: [8], 10: [10], 12: [12]}
 def main():
     counts = {}
     current_events = {}
@@ -18,6 +21,10 @@ def main():
         with open(INPUT_FILE, "r") as read_f:
             for line in read_f.readlines():
                 event = line.split(",")[0]
+                for k, v in zip(SAME_EVENTS.keys(), SAME_EVENTS.values()):
+                    if int(event) in v:
+                        event = str(k)
+                        break
                 data = line.split("\n")[0].split(",")[1:]
                 if event in current_events.keys():
                     current_events[event].append(data)
@@ -39,9 +46,9 @@ def main():
                     if (curr_ts - old_ts) > next_time[event]:
                         last_event[event] = str(curr_ts)
                         if int(event) in BALL:
-                            next_time.update({event: random.randint(2.5e11, 6e11)})
+                            next_time.update({event: random.randint(2.5e11, 4e11)})
                         else:
-                            next_time.update({event: random.randint(4e11, 7e11)})
+                            next_time.update({event: random.randint(3e11, 5e11)})
                         add_flag = True
                 if add_flag:
                     value = current_events[event]

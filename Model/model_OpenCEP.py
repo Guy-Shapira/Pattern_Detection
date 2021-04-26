@@ -3,6 +3,8 @@ import torch
 import random
 import torch.nn as nn
 import os
+from copy import deepcopy
+
 from Model.utils import (
     OpenCEP_pattern,
     after_epoch_test,
@@ -14,6 +16,7 @@ from Model.utils import (
     set_values_bayesian,
     store_to_file,
     replace_values,
+    run_OpenCEP,
 )
 import tqdm
 import pathlib
@@ -21,8 +24,12 @@ from bayes_opt import BayesianOptimization
 import ast
 import sys
 import time
+from itertools import count
+from multiprocessing import Process, Queue
 import torch.nn.functional as F
 from torch.autograd import Variable
+import torch.cuda as cuda_handle
+import gc
 import numpy as np
 import matplotlib
 matplotlib.use('pdf')
@@ -31,12 +38,17 @@ from shutil import copyfile
 import datetime
 from difflib import SequenceMatcher
 import pandas as pd
+from stream.FileStream import FileInputStream, FileOutputStream
 from sklearn.neighbors import KNeighborsClassifier as KNN
+import wandb
+from bayes_opt import BayesianOptimization
+import json
 GRAPH_VALUE = 50
 GAMMA = 0.99
 EMBDEDDING_TOTAL_SIZE = 21
 PAD_VALUE = -5.5
-
+class_inst = None
+num_epochs_trained = None
 
 class ruleMiningClass(nn.Module):
     def __init__(
@@ -49,15 +61,17 @@ class ruleMiningClass(nn.Module):
         max_values=None,
         normailze_values=None,
         window_size=350,
-        num_cols=5,
         max_fine_app=55,
         eff_cols=None,
         all_cols=None,
         max_time=0,
         lr=1e-6,
         init_flag=False,
+        hidden_size1=512,
+        hidden_size2=2048,
     ):
         super().__init__()
+        self.lr = lr
         # self.actions = [">", "<", "=", "+>", "->", "*="]
         self.actions = [">", "<", "="]
         # self.actions = [">", "<", "=", "+>", "->", "*]
@@ -70,27 +84,36 @@ class ruleMiningClass(nn.Module):
         self.normailze_values = normailze_values
         self.embedding_events = nn.Embedding(num_events + 1, 3)
         self.embedding_values = [nn.Embedding(max_val, 3) for max_val in max_values]
+        self.pattern_path = pattern_path.split("/")[-1].split(".")[0]
         if init_flag:
-            self.data = self._create_data(data_path)
-            # print(self.data.shape)
-            # exit()
-            self.data = self.data.view(len(self.data), -1)
-        self.hidden_size1 = 50 * 32
-        self.hidden_size2 = 4096
-        self.num_cols = num_cols
+            if not os.path.exists(f"Processed_Data/{self.window_size}.pt"):
+                self.data = self._create_data(data_path)
+                self.data = self.data.view(len(self.data), -1)
+                self.data = self.data.detach().clone().requires_grad_(True)
+                torch.save(self.data, f"Processed_Data/{self.window_size}.pt")
+            else:
+                self.data = torch.load(f"Processed_Data/{self.window_size}.pt").requires_grad_(True)
+
+        self.hidden_size1 = hidden_size1
+        self.hidden_size2 = hidden_size2
+        self.num_cols = len(eff_cols)
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
+
         self.linear_base = nn.Linear(
-            self.window_size * EMBDEDDING_TOTAL_SIZE + (self.match_max_size + 1)  * (self.num_cols + 1),
+            self.window_size * EMBDEDDING_TOTAL_SIZE,
+            self.hidden_size1,
+        ).cuda()
+        self.dropout = nn.Dropout(p=0.4).cuda()
+        self.spread_patterns = nn.Linear(
+            (self.match_max_size + 1) * (self.num_cols + 1),
+            self.hidden_size1,
+        ).cuda()
+        self.linear_finish = nn.Linear(
+            2 * self.hidden_size1,
             self.hidden_size2,
         ).cuda()
-        # self.linear_base = nn.Linear(
-        #     self.hidden_size1,
-        #     self.hidden_size2,
-        # ).cuda()
-        self.conv1 = nn.Conv1d(self.window_size + 1, 32, kernel_size=3, dilation=2, padding=0, stride=1).cuda()
-        self.bn1 = nn.BatchNorm1d(32).cuda()
         self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
 
         self.action_layers = nn.ModuleList(
@@ -99,19 +122,72 @@ class ruleMiningClass(nn.Module):
                 for _ in range(self.num_cols)
             ]
         ).cuda()
-        self.critic = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
 
-        self._create_training_dir(data_path)
+        # self._create_training_dir(data_path)
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         self.all_cols = all_cols
         self.cols = eff_cols
         self.max_fine_app = max_fine_app
         self.knn_avg = 0
-        self.knn = self._create_df(pattern_path)
+        if not pattern_path == "":
+            self.knn = self._create_df(pattern_path)
         self.max_time = max_time
         self.count = 0
         self.min_values_bayes = [-i for i in normailze_values]
         self.max_values_bayes = [i - j for i,j in zip(max_values, normailze_values)]
+
+
+    def layers_based_hidden(self, hidden_size):
+        self.hidden_size1 = hidden_size
+        self.linear_base = nn.Linear(
+            self.window_size * EMBDEDDING_TOTAL_SIZE,
+            self.hidden_size1,
+        ).cuda()
+        self.linear_finish = nn.Linear(
+            self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
+            self.hidden_size2,
+        ).cuda()
+
+    def layers_based_hidden2(self, hidden_size):
+        self.linear_finish = nn.Linear(
+            self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
+            self.hidden_size2,
+        ).cuda()
+        self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
+
+        self.action_layers = nn.ModuleList(
+            [
+                nn.Linear(self.hidden_size2, self.num_actions)
+                for _ in range(self.num_cols)
+            ]
+        ).cuda()
+        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
+
+    def layers_hidden(self, hidden_size1, hidden_size2):
+        self.hidden_size1 = hidden_size1
+        self.hidden_size2 = hidden_size2
+        self.linear_base = nn.Linear(
+            self.window_size * EMBDEDDING_TOTAL_SIZE,
+            self.hidden_size1,
+        ).cuda()
+        self.linear_finish = nn.Linear(
+            self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
+            self.hidden_size2,
+        ).cuda()
+        self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
+
+        self.action_layers = nn.ModuleList(
+            [
+                nn.Linear(self.hidden_size2, self.num_actions)
+                for _ in range(self.num_cols)
+            ]
+        ).cuda()
+        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
+
 
     def _create_df(self, pattern_path):
         def fix_str_list_columns_init(data, flag=False):
@@ -131,39 +207,61 @@ class ruleMiningClass(nn.Module):
                 temp[col] = temp[col].cat.codes
             return temp
 
-
         self.list_of_dfs = []
         df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
-
         df.rating = df.rating.apply(lambda x : round(float(x) + 0.5))
-        str_list_columns = ["conds", "actions"]
-        int_list_columns = ["events"]
-        fit_columns = int_list_columns + str_list_columns
-        df_new = None
-        for col in fit_columns:
-            temp = None
 
-            for val in df[col]:
-                if temp is None:
-                    temp = fix_str_list_columns_init(val)
+        if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
+            print("Creating Knn!")
+            os.mkdir(f"Processed_knn/{self.pattern_path}")
+            str_list_columns = ["conds", "actions"]
+            int_list_columns = ["events"]
+            fit_columns = int_list_columns + str_list_columns
+            df_new = None
+            for col in fit_columns:
+                temp = None
+
+                for val in df[col]:
+                    if temp is None:
+                        temp = fix_str_list_columns_init(val)
+                    else:
+                        temp = temp.append(fix_str_list_columns_init(val))
+                temp = temp.reset_index(drop=True)
+
+                add_df = []
+                for col_name in temp.columns:
+                    temp_dict = dict(zip(temp[col_name],temp[col_name].astype('category').cat.codes))
+                    temp_dict['Nan'] = -1
+                    add_df.append(temp_dict)
+                self.list_of_dfs.append(add_df)
+                if not os.path.exists(f"Processed_knn/{self.pattern_path}/dicts"):
+                    os.mkdir(f"Processed_knn/{self.pattern_path}/dicts")
+                with open(f"Processed_knn/{self.pattern_path}/dicts/{len(self.list_of_dfs)}", 'w') as fp:
+                    json.dump(add_df, fp)
+
+                combined = fix_str_list_columns(temp)
+                combined.columns = list(map(lambda x: col + "_" + str(x), combined.columns))
+
+                if df_new is None:
+                    df_new = combined
                 else:
-                    temp = temp.append(fix_str_list_columns_init(val))
-            temp = temp.reset_index(drop=True)
+                    df_new = pd.concat([df_new, combined], axis=1).reset_index(drop=True)
+                df_new = df_new.fillna(PAD_VALUE)
 
-            add_df = []
-            for col_name in temp.columns:
-                temp_dict = dict(zip(temp[col_name],temp[col_name].astype('category').cat.codes))
-                temp_dict['Nan'] = -1
-                add_df.append(temp_dict)
-            self.list_of_dfs.append(add_df)
-            combined = fix_str_list_columns(temp)
-            combined.columns = list(map(lambda x: col + "_" + str(x), combined.columns))
 
-            if df_new is None:
-                df_new = combined
-            else:
-                df_new = pd.concat([df_new, combined], axis=1).reset_index(drop=True)
-            df_new = df_new.fillna(PAD_VALUE)
+            df_new.to_csv(f"Processed_knn/{self.pattern_path}/df", index=False)
+            # print(df_new)
+            # exit()
+
+        else:
+            file_names = os.listdir(f"Processed_knn/{self.pattern_path}/dicts")
+            for file_name in file_names:
+                with open(f"Processed_knn/{self.pattern_path}/dicts/{file_name}", "r") as read_file:
+                    self.list_of_dfs.append(json.load(read_file))
+            df_new = pd.read_csv(f"Processed_knn/{self.pattern_path}/df")
+            # print(df_new)
+            # exit()
+
         knn = KNN(n_neighbors=1)
         knn.fit(df_new, df["rating"])
         self.knn_avg = df.rating.mean()
@@ -172,6 +270,7 @@ class ruleMiningClass(nn.Module):
     def _create_data(self, data_path):
         date_time_obj = None
         data = None
+        print(data_path)
         with open(data_path) as f:
             for line in f:
                 values = line.split("\n")[0]
@@ -179,9 +278,25 @@ class ruleMiningClass(nn.Module):
                 event = values[0]
                 event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
                 values = values[2:] # skip sid and ts
-                embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
-                embed_values.insert(0, event)
-
+                try:
+                    embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values[:len(self.normailze_values)])]
+                    embed_values.insert(0, event)
+                except Exception as e:
+                    embed_values = []
+                    print(e)
+                    print(values)
+                    print(len(values))
+                    print(line)
+                    for i, value in enumerate(values[:len(self.normailze_values)]):
+                        print(i)
+                        print(value)
+                        a = self.normailze_values[i]
+                        print(a)
+                        a = torch.tensor(int(value) + a)
+                        print(a)
+                        a = self.embedding_values[i](a)
+                        print(a)
+                        embed_values.append(a)
                 if data is None:
                     data = torch.cat(tuple(embed_values), 0)
                     # filler = torch.tensor([PAD_VALUE] * (self.max_predict - len(data)))
@@ -220,7 +335,7 @@ class ruleMiningClass(nn.Module):
                 for j in range(i, i + self.window_size):
                     f.write(lines[j])
 
-    def forward(self, input, mask, T=1):
+    def forward(self, input, old_desicions, mask, training_factor=0.0, T=1):
         def masked_softmax(vec, mask, dim=1, T=1):
             vec = vec / T
             masked_vec = vec.cpu() * mask.float()
@@ -232,28 +347,26 @@ class ruleMiningClass(nn.Module):
             masked_sums += zeros.float()
             return masked_exps / masked_sums
 
-        # # print(self.linear_base)
-        # input = self.conv1(input.unsqueeze(0).cuda())
-        # # print(input.shappe)
-        # input = self.bn1(input.cuda())
-        # input = input.flatten()
-        # # print(input)
-        # print(input.shape)
+        x1 = self.dropout(self.linear_base(input.cuda())).cuda()
+        x2 = self.spread_patterns(old_desicions.cuda()).cuda()
+        global num_epochs_trained
+        if num_epochs_trained >= 1:
+        # if np.random.rand() <= 1 - training_factor:
+            x1 *= 0.1
+            x2 *= 1.5
+        combined = torch.cat((x1, x2)).cuda()
+        after_relu = F.relu(self.linear_finish(combined))
+        # x = F.relu(self.linear_base(input.cuda()))
 
-        # input = self.bn1(self.conv1(input.cuda())).flatten()
-
-        # print(input.shape)
-        # print(self.linear_base)
-        x = F.relu(self.linear_base(input.cuda()))
-
-        value = self.critic(x)
-        event_before_softmax = self.event_tagger(x)
+        value_reward = self.critic_reward(after_relu)
+        value_rating = self.critic_rating(after_relu)
+        event_before_softmax = self.event_tagger(after_relu)
         event_after_softmax = masked_softmax(event_before_softmax, mask.clone(), dim=0, T=T)
-        return event_after_softmax, value
+        return event_after_softmax, value_reward, value_rating
 
-    def get_event(self, input, index=0, mask=None, training_factor=0.0, T=1):
+    def get_event(self, input,old_desicions, index=0, mask=None, training_factor=0.0, T=1):
         # print(input.shape)
-        probs, value = self.forward(Variable(input), mask, T=T)
+        probs, value_reward, value_rating = self.forward(Variable(input), Variable(old_desicions), mask, training_factor=training_factor, T=T)
         numpy_probs = probs.detach().cpu().numpy()
         action = np.random.choice(
             self.num_events + 1, p=np.squeeze(numpy_probs)
@@ -263,22 +376,35 @@ class ruleMiningClass(nn.Module):
             action = np.random.randint(len(mask))
         if index % 50 == 0:
             print(probs)
-            # print(log_prob)
-            # sleep(1)
 
         log_prob = torch.log(probs.squeeze(0)[action])
         if abs(log_prob) < 0.1:
             self.count += 1
 
-        return action, log_prob, value, entropy
+        return action, log_prob, value_reward, value_rating, entropy
 
 
     def single_col_mini_action(self, data, index, training_factor=0.0):
+        def masked_softmax(vec, mask, dim=0, T=1):
+            vec = vec / T
+            masked_vec = vec.cpu() * mask.float()
+            max_vec = torch.max(masked_vec, dim=dim, keepdim=True)[0]
+            exps = torch.exp(masked_vec - max_vec).cpu()
+            masked_exps = exps * mask.float()
+            masked_sums = masked_exps.sum(dim, keepdim=True)
+            zeros = masked_sums == 0
+            masked_sums += zeros.float()
+            return masked_exps / masked_sums
+
+
         x = F.relu(self.action_layers[index](data))
-        probs = F.softmax(x, dim=0)
+        mask = [1.0] * self.num_actions
+        mask[-1] = 20
+        mask = torch.tensor([float(i)/sum(mask) for i in mask])
+
+        probs = masked_softmax(x, mask=mask, dim=0)
         numpy_probs = probs.detach().cpu().numpy()
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
-
         if np.random.rand() > 1 - training_factor:
             highest_prob_action = np.random.randint(len(probs))
         else:
@@ -296,7 +422,7 @@ class ruleMiningClass(nn.Module):
 
         return highest_prob_action, highest_prob_value, log_prob, entropy
 
-    def get_cols_mini_actions(self, data, training_factor=0.0):
+    def get_cols_mini_actions(self, data, old_desicions, training_factor=0.0):
         mini_actions = []
         log_probs = 0.0
         compl_vals = []
@@ -304,13 +430,18 @@ class ruleMiningClass(nn.Module):
         mini_actions_vals = []
         total_entropy = 0
         comps_to = []
-        # data = self.conv1(data.unsqueeze(0).cuda())
-        # data = self.bn1(data.cuda())
-        # data = data.flatten()
+        after_base = self.dropout(self.linear_base(data))
+        after_pattern = self.spread_patterns(old_desicions.cuda())
+        # if np.random.rand() <= 1 - training_factor:
+        global num_epochs_trained
+        if num_epochs_trained >= 1:
+            after_base *= 0.1
+            after_pattern *= 1.5
 
-        updated_data = self.linear_base(data)
+        updated_data = torch.cat((after_base, after_pattern))
+        after_relu = F.relu(self.linear_finish(updated_data))
         for i in range(self.num_cols):
-            action, value, log, entropy = self.single_col_mini_action(updated_data, i, training_factor) #this is weird, should update data after actions
+            action, value, log, entropy = self.single_col_mini_action(after_relu, i, training_factor) #this is weird, should update data after actions
             mini_actions_vals.append(action)
             total_entropy += entropy / self.num_cols
             mini_action, cond, comp_to = get_action_type(action, self.num_actions, self.actions, self.match_max_size)
@@ -328,7 +459,6 @@ class ruleMiningClass(nn.Module):
 
 def update_policy1(policy_network, rewards, log_probs):
     discounted_rewards = []
-
     for t in range(len(rewards)):
         Gt = 0
         pw = 0
@@ -360,19 +490,38 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
     values = torch.FloatTensor(values)
     Qvals = torch.FloatTensor(Qvals)
     log_probs = torch.stack(log_probs)
-    # advantage = Qvals - values
-    advantage = Qvals
+    advantage = Qvals - values
 
-    actor_loss = (-log_probs * advantage).mean()
-    critic_loss = 0.5 * advantage.pow(2).mean()
-    policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
-    policy_gradient = policy_gradient.cuda()
+    policy_loss = [-log_prob * adv for (log_prob, adv) in zip(log_probs, advantage)]
+    value_loss = torch.tensor([F.smooth_l1_loss(torch.tensor([value]), torch.tensor([Qval])) for (value, Qval) in zip(values, Qvals)])
+
     policy_network.optimizer.zero_grad()
-    policy_gradient.backward(retain_graph=True)
+    loss = torch.stack(policy_loss).sum() + value_loss.sum()
+    loss = loss.cuda()
+    loss.backward(retain_graph=True)
     policy_network.optimizer.step()
 
+    # actor_loss = (-log_probs * advantage).mean()
+    # critic_loss = 0.5 * advantage.pow(2).mean()
+    # policy_gradient = actor_loss + critic_loss + 0.001 * entropy_term
+    # policy_gradient = policy_gradient.cuda()
+    # policy_network.optimizer.zero_grad()
+    # policy_gradient.backward(retain_graph=True)
+    # policy_network.optimizer.step()
 
-def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
+
+def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
+    run_name = "spread_test_window=500"
+    not_finished_count = 0
+    run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
+    config = wandb.config
+    config.hidden_size1 = model.hidden_size1
+    config.hidden_size2 = model.hidden_size2
+    config.learning_rate = model.lr
+    config.batch_size = bs
+    config.window_size = model.window_size
+    config.num_epochs = num_epochs
+    config.split_factor = split_factor
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
@@ -393,12 +542,18 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
     )
     max_rating = []
     entropy_term, turn_flag = 0, 0
-    training_factor = 0.50
+    training_factor = 0.8
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
     total_count = -25
-
+    # total_count = 0
+    global num_epochs_trained
     for epoch in range(num_epochs):
+        if num_epochs_trained is None:
+            num_epochs_trained = 0
+        else:
+            num_epochs_trained += 1
+        print(f"Not finished = {not_finished_count}\n")
         if epoch > 1:
             for g in model.optimizer.param_groups:
                 g['lr'] *= 0.85
@@ -407,7 +562,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
             temper = 0.5
         else:
             temper = 1
-            # temper = max(1, int(temper/2 + 0.5))
 
         with tqdm.tqdm(total=bs, file=pbar_file) as pbar:
             in_round_count = 0
@@ -425,8 +579,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 data = model.data[index]
                 data_size = len(data)
                 old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
-                # old_desicions = old_desicions.unsqueeze(0)
-                data = torch.cat((data, old_desicions.float()))
                 count = 0
                 best_reward = 0.0
                 pbar.update(n=1)
@@ -452,18 +604,22 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 if in_round_count % 35 == 0 and epoch < 5:
                     temper /= 1.05
                 if total_count % 25 == 0:
-                    training_factor /= 1.1
+                    training_factor /= 1.2
                 while not is_done:
                     data = data.cuda()
                     mask_orig = mask.clone()
-                    action, log_prob, value, entropy = model.get_event(
-                        data, in_round_count, mask, training_factor=training_factor, T=temper
+                    action, log_prob, value_reward, value_rating, entropy = model.get_event(
+                        data, old_desicions, in_round_count, mask, training_factor=training_factor, T=temper
                     )
-                    data = data.clone()
-                    data[data_size + count * (model.num_cols + 1)] = model.embedding_desicions(
+                    old_desicions = old_desicions.clone()
+                    old_desicions[count * (model.num_cols + 1)] = model.embedding_desicions(
                         torch.tensor(action)
                     ).cuda()
                     count += 1
+                    if turn_flag == 0:
+                        value = value_rating
+                    else:
+                        value = value_reward
                     value = value.detach().cpu().numpy()[0]
                     values.append(value)
                     entropy_term += entropy
@@ -480,14 +636,17 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                             real_rewards.append(10)
                             break
                     else:
+                        mask[-1] *= 1.1
+                        mask[action] *= 1.25
                         event = new_mapping(action, model.events)
                         events.append(event)
-                        mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to = model.get_cols_mini_actions(data, training_factor=training_factor)
+                        mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to = \
+                            model.get_cols_mini_actions(data, old_desicions, training_factor=training_factor)
                         all_comps.append(comps_to)
                         entropy_term += entropy
                         for j, action_val in enumerate(actions_vals):
-                            data = data.clone()
-                            data[data_size + count * (model.num_cols + 1) + j + 1] = model.embedding_actions(torch.tensor(action_val))
+                            old_desicions = old_desicions.clone()
+                            old_desicions[count * (model.num_cols + 1) + j + 1] = model.embedding_actions(torch.tensor(action_val))
                         log_prob += log.item()
                         log_probs.append(log_prob)
                         actions.append(mini_actions)
@@ -526,74 +685,99 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                             comp_vals = replace_values(comp_vals, selected_values)
 
                         comp_values.append(comp_vals)
-                        pattern = OpenCEP_pattern(
-                            events, actions, index, comp_values, model.cols, all_conds, all_comps, model.max_time
-                        )
+                        finished_flag = True
+                        try:
+                            pattern = OpenCEP_pattern(
+                                events, actions, index, comp_values, model.cols, all_conds, all_comps, model.max_time
+                            )
+                        except Exception as e:
+                            # timeout error
+                            finished_flag = False
+                            not_finished_count += 1
+
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-                        eff_pattern = pattern.condition
-                        with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
-                            content = f.read()
-                            reward = int(content.count("\n") / (len(actions) + 1))
-                            if reward > model.max_fine_app:
-                                reward = -1
-
-                            real_rewards.append(reward)
+                        if rating_flag:
                             predict_pattern = None
-                            for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
-                                arr = arr.copy()
-                                temp_pd = model.list_of_dfs[arr_index].copy()
-                                arr += ["Nan"] * (len(temp_pd) - len(arr))
-                                arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
-                                to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
+                            try:
+                                for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
+                                    arr = arr.copy()
+                                    temp_pd = model.list_of_dfs[arr_index].copy()
+                                    arr += ["Nan"] * (len(temp_pd) - len(arr))
+                                    arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
+                                    to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
 
-                                if predict_pattern is None:
-                                    predict_pattern = to_add
-                                else:
-                                    predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
+                                    if predict_pattern is None:
+                                        predict_pattern = to_add
+                                    else:
+                                        predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
-                            rating = model.knn.predict(predict_pattern).item()
-                            if len(events) == 1:
-                                ratings.append(rating)
-                                # rating = 1
-                            else:
-                                ratings.append(rating)
-                                # rating -= (model.knn_avg - 0.5)
+                            # print(model.knn)
+                            # print(predict_pattern)
+                                rating = model.knn.predict(predict_pattern).item()
+                            except Exception as e:
+                                print(e)
+                                rating = model.knn_avg
+                            if len(events) >= 3:
+                                rating *= 1.25
+                            if "=" in flatten(all_conds):
+                                rating *= 1.2
+                            ratings.append(rating)
+                            rating -= (model.knn_avg - 0.5)
+                            normalize_rating.append(rating)
+                        else:
+                            rating = 1
+                            ratings.append(rating)
                             normalize_rating.append(rating)
 
-                            if ball_patterns(events):
-                                rewards.append(-5)
-                                normalize_reward.append(-25)
-                                print("ball pattern!")
-                                break
-                            if reward == 0:
-                                normalize_reward.append(-25)
-                                rewards.append(-1.5)
-                                break
-                            normalize_reward.append(reward - 20)
-                            reward *= rating
+                        if not finished_flag:
+                            reward = -5
                             rewards.append(reward)
-                            if len(best_found) < 10:
-                                best_found.update({reward: pattern})
-                            else:
-                                worst_reward = sorted(list(best_found.keys()))[0]
-                                if reward > worst_reward:
-                                    del best_found[worst_reward]
+                            real_rewards.append(reward)
+                            normalize_reward.append(reward - 20)
+                            is_done = True
+                        else:
+                            eff_pattern = pattern.condition
+
+                            with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+                                content = f.read()
+                                reward = int(content.count("\n") / (len(actions) + 1))
+                                if reward > model.max_fine_app:
+                                    reward = -1
+                                reward *= (1 + (len(events) - 1)/5)
+                                real_rewards.append(reward)
+                                if reward == 0:
+                                    normalize_reward.append(-25)
+                                    rewards.append(-1.5)
+                                    break
+                                normalize_reward.append(reward - 20)
+                                reward *= rating
+                                rewards.append(reward)
+                                if len(best_found) < 10:
                                     best_found.update({reward: pattern})
+                                else:
+                                    worst_reward = sorted(list(best_found.keys()))[0]
+                                    if reward > worst_reward:
+                                        del best_found[worst_reward]
+                                        best_found.update({reward: pattern})
 
 
                     if count >= model.match_max_size:
                         is_done = True
 
-                _, Qval = model.forward(data, mask, T=temper)
-                Qval = Qval.detach().cpu().numpy()[0]
-                del data
+                _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), mask, training_factor=training_factor, T=temper)
+                if turn_flag == 0:
 
-                if total_count <= 0:
-                    send_rewards = rewards
-                elif turn_flag == 0:
-                    send_rewards = rewards
+                    Qval = Qval_rating.detach().cpu().numpy()[0]
                 else:
-                    send_rewards = rewards
+                    Qval = Qval_reward.detach().cpu().numpy()[0]
+                del data
+                gc.collect()
+                # if total_count < 0:
+                #     send_rewards = rewards
+                if turn_flag == 0:
+                    send_rewards = ratings
+                else:
+                    send_rewards = real_rewards
                 if total_count % bs == 0:
                     update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, flag=True)
                 else:
@@ -611,9 +795,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 rating_plot.append(ratings[index_max])
                 mean_real.append(np.mean(real_rewards))
 
-                if 1:
+                if in_round_count % 2 == 0:
                     sys.stdout.write(
-                        "Real reward : {}, Rating {},  comparisons : {}\n".format(
+                        "\nReal reward : {}, Rating {},  comparisons : {}\n".format(
                             real_rewards[index_max],
                             ratings[index_max],
                             sum([t != "nop" for sub in comp_values for t in sub]),
@@ -621,14 +805,14 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                     )
                     str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
                      comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
-                    sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern[:index_max + 1]} index = {index}\n")
+                    sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
                     sys.stdout.write(
                         "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
                             in_round_count,
                             index,
                             np.round(rewards[index_max], decimals=3),
                             np.round(np.mean(all_rewards), decimals=3),
-                            index_max,
+                            index_max + 1,
                         )
                     )
                 if model.count > 15:
@@ -651,7 +835,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
                 np.mean(real[t : t + GRAPH_VALUE])
                 for t in range(0, len(real), GRAPH_VALUE)
             ]
-
+            for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
+                wandb.log({"reward_hidden": rew, "rating_hidden": rat, "max rating_hidden": max_rat})
             fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
 
             ax1.set_xlabel("Episode")
@@ -686,7 +871,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
             str_split_factor = str(split_factor * 100) + "%"
             if not os.path.exists(f"Graphs/{str_split_factor}/"):
                 os.mkdir(f"Graphs/{str_split_factor}/")
-            plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}.pdf")
+            plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}_{model.window_size}.pdf")
             plt.show()
             factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
@@ -701,7 +886,16 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0):
         plt.plot(results, "g")
         plt.show()
 
-    return factor_results[-1], best_found
+    run.finish()
+    cuda_handle.empty_cache()
+    best_res = - 10
+    for dict_res in factor_results:
+        new_res = dict_res['rating'] / 10 + dict_res['reward'] / model.max_fine_app
+        if new_res > best_res:
+            best_res = new_res
+    return best_res
+    # return factor_results[-1], best_found
+
 
 # def predict_window(model, i, data):
 #     data_size = len(data)
@@ -874,72 +1068,132 @@ def is_pareto_efficient(costs):
     return is_efficient
 
 
+def bayesian_hidden_size_search(hidden_size):
+    hidden_size = int(hidden_size)
+    global class_inst
+    train_inst = deepcopy(class_inst)
+    train_inst.layers_based_hidden(hidden_size)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+
+def bayesian_lr_search(lr):
+    global class_inst
+    train_inst = deepcopy(class_inst)
+    train_inst.lr = lr
+    train_inst.optimizer = torch.optim.Adam(train_inst.parameters(), lr=lr)
+    print(train_inst.parameters())
+    # train_inst.layers_based_hidden(hidden_size)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+
+
+def bayesian_hidden2_size_search(hidden_size):
+    hidden_size = int(hidden_size)
+    global class_inst
+    train_inst = deepcopy(class_inst)
+    train_inst.hidden_size2 = hidden_size
+    train_inst.layers_based_hidden2(hidden_size)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+
+
+def bayesian_hidden_search(hidden_size1, hidden_size2):
+    global class_inst
+    train_inst = deepcopy(class_inst)
+    hidden_size1 = int(hidden_size1)
+    hidden_size2 = int(hidden_size2)
+    train_inst.layers_hidden(hidden_size1, hidden_size2)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+
+
 def main(parser):
     args = parser.parse_args()
     max_vals = [int(i) for i in args.max_vals.split(",")]
     norm_vals = [int(i) for i in args.norm_vals.split(",")]
     all_cols = args.all_cols.replace(" ", "").split(",")
     eff_cols = args.eff_cols.replace(" ", "").split(",")
+    if args.pattern_path == "":
+        rating_flag = False
+    else:
+        rating_flag = True
 
     results = {}
     data = None
     first = True
     suggested_models = []
     all_patterns = []
-    # for split_factor in range(50, 75, 5):
-    if 1:
-        split_factor = 50
+
+    # for split_factor in range(60, 90, 10):
+    # if 1:
+    # for window_size in range(450, 650, 50):
+    for split_factor in range(50, 55, 50):
+    # if 1:
+        # split_factor = 55
+        window_size = 500
         eff_split_factor = split_factor / 100
+        global class_inst
         class_inst = ruleMiningClass(data_path=args.data_path,
                                     pattern_path=args.pattern_path,
                                     events_path=args.events_path,
                                     num_events=args.num_events,
                                     match_max_size=args.max_size,
-                                    window_size=args.window_size,
+                                    window_size=window_size,
                                     max_fine_app=args.max_fine_app,
                                     max_values=max_vals,
                                     normailze_values=norm_vals,
                                     all_cols=all_cols,
                                     eff_cols=eff_cols,
                                     max_time=args.pattern_max_time,
-                                    init_flag=first)
-        if first:
-            data = class_inst.data.clone()
-            first = False
-        else:
-            class_inst.data = data
+                                    hidden_size1=args.hidden_size1,
+                                    hidden_size2=args.hidden_size2,
+                                    init_flag=True)
 
-        result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor)
-        all_patterns.append(patterns)
-        print(patterns)
-        results.update({split_factor: result})
-        suggested_models.append({split_factor: class_inst})
-    print(results)
-    pareto_results = np.array(list(results.values()))
-    pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
-    print(pareto_results)
-    patero_results = is_pareto_efficient(pareto_results)
-    for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
-        if patero_res:
-            print(model)
-            print(patterns)
+        # optimizer = BayesianOptimization(
+        #     f=bayesian_hidden_search,
+        #     pbounds={'hidden_size1': (512, 2048), 'hidden_size2': (512, 2048)},
+        #     random_state=1,
+        # )
+        # optimizer.maximize(
+        #     init_points=3,
+        #     n_iter=5,
+        # )
+        result = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
+        # result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
+    #     all_patterns.append(patterns)
+    #     cuda_handle.empty_cache()
+    #     print(patterns)
+    #     results.update({split_factor: result})
+    #     suggested_models.append({split_factor: class_inst})
+    # print(results)
+    # pareto_results = np.array(list(results.values()))
+    # pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
+    # print(pareto_results)
+    # patero_results = is_pareto_efficient(pareto_results)
+    # good_patterns = []
+    # for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
+    #     if patero_res:
+    #         print(model)
+    #         good_patterns.extend(list(patterns.values()))
+    #         print(patterns)
+    return
+
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=200, type=int, help='batch size')
-    parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
+    parser.add_argument('--epochs', default=8, type=int, help='num epochs to train')
     parser.add_argument('--lr', default=1e-5, type=float, help='starting learning rate')
+    parser.add_argument('--hidden_size1', default=512, type=int, help='hidden_size param for model')
+    parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--max_fine_app', default=55, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=7, type=int, help='maximum time for pattern (seconds)')
     parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41,type=int, help='number of unique events in data')
     parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
-    parser.add_argument('--events_path', default='Football/events', help='path to list of events')
-    parser.add_argument('--pattern_path', default='Patterns/pattern15.csv', help='path to known patterns')
-    parser.add_argument('--max_vals', default = "97000, 100000, 15000, 20000, 20000, 20000", type=str, help="max values in columns")
+    parser.add_argument('--events_path', default='Football/merged_events', help='path to list of events')
+    parser.add_argument('--pattern_path', default='Patterns/pattern17.csv', help='path to known patterns')
+    parser.add_argument('--final_data_path', default='Football/xal', help='path to next level data')
+    parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
     parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
     parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
     parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")

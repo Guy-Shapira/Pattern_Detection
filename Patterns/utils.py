@@ -34,8 +34,8 @@ from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
 
-CSV_PATH = "Patterns/check.csv"
-CSV_PATH_FINAL = "Patterns/check_after.csv"
+CSV_PATH = "Patterns/pattern17_temp.csv"
+CSV_PATH_FINAL = "Patterns/pattern17.csv"
 
 # #
 # from base.Formula import (
@@ -467,11 +467,7 @@ def new_mapping(event, reverse=False, random=False):
     :param event: model's tagged event
     :return: the actual event
     """
-    values = [98,  69,  19,  67,  66,  75,  65,  40,  47,  64,  44,  59,  68,
-       106,  61,  49,  28,  99,  38,  58,  54, 100, 105,  73,  16,  97,
-        14,  53,  23,  24,  74,  88,  63,  13,  71,  57,  62,  52,   8,
-        10,   4]
-
+    values = [4, 8, 10, 13, 47, 49, 19, 53, 23, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 105]
     if random:
         weights = [5 if i in [4, 8, 10] else 1 for i in values]
         weights = np.array(weights)

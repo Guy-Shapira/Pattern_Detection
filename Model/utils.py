@@ -34,6 +34,7 @@ from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanM
 from datetime import timedelta
 import csv
 import pickle
+import timeout_decorator
 
 currentPath = pathlib.Path(os.path.dirname(__file__))
 absolutePath = str(currentPath.parent)
@@ -255,6 +256,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
+@timeout_decorator.timeout(10)
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
@@ -295,6 +297,7 @@ def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_M
 def run_OpenCEP(
     test_name,
     patterns,
+    events=None,
     eval_mechanism_params=DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS,
 ):
     """
@@ -306,9 +309,14 @@ def run_OpenCEP(
     :return: total run time of CEP engine, currently this value is unused
     """
     cep = CEP(patterns, eval_mechanism_params)
-    events = FileInputStream(
-        os.path.join(absolutePath, "Model", "training", "{}.txt".format(test_name))
-    )
+    if events is None:
+        events = FileInputStream(
+            os.path.join(absolutePath, "Model", "training", "{}.txt".format(test_name))
+        )
+    else:
+        events = FileInputStream(
+            os.path.join(absolutePath, events)
+        )
     base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
