@@ -26,8 +26,8 @@ class ratingPredictor(nn.Module):
         ratings_col,
     ):
         super().__init__()
-        self.rating_df_train = rating_df[:50]
-        self.ratings_col_train = ratings_col[:50]
+        self.rating_df_train = rating_df[:1200]
+        self.ratings_col_train = ratings_col[:1200]
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
@@ -57,6 +57,8 @@ class ratingPredictor(nn.Module):
         user_ratings = []
 
         for str_pattern, events in zip(self.unlabeld_strs[:actuall_size], self.unlabeld_events[:actuall_size]):
+            # print(self.unlabeld_events[:actuall_size])
+            # exit()
             print(events)
             print(str_pattern)
             user_rating = None
@@ -65,7 +67,7 @@ class ratingPredictor(nn.Module):
                 try:
                     user_rating = int(user_rating)
                 except ValueError:
-                    user_rating = input("retry: enter rating ")
+                    user_rating = int(input("retry: enter rating "))
             user_ratings.append(user_rating)
         user_ratings = torch.tensor(user_ratings).long().cuda()
         self.ratings_col_train = torch.cat([self.ratings_col_train, user_ratings])
@@ -76,6 +78,7 @@ class ratingPredictor(nn.Module):
 
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
         self.train_loader = data_utils.DataLoader(train, batch_size=10)
+        self.unlabeld_strs = list(self.unlabeld_strs)
 
     def forward(self, data):
         data = torch.tensor(data).cuda()
@@ -92,7 +95,12 @@ class ratingPredictor(nn.Module):
             self.rating_df_unlabeld = torch.tensor(data)
         else:
             self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, torch.tensor(data)])
-        self.unlabeld_strs.append(data_str)
+        try:
+            self.unlabeld_strs.append(data_str)
+        except Exception as e:
+            print(type(self.unlabeld_strs))
+            print(self.unlabeld_strs)
+            raise e
         self.unlabeld_events.append(events)
         res = self.predict(data)
         _, res = torch.max(res, dim=1)
@@ -120,7 +128,6 @@ class ratingPredictor(nn.Module):
         return acc
 
     def test_single_epoch(self):
-
         correct = 0
         total_loss = 0
         count_losses, count_all = 0, 0
@@ -136,7 +143,7 @@ class ratingPredictor(nn.Module):
             count_all += len(input_x)
 
         acc = correct / count_all
-        print(f"Test Acc: {acc} Loss : {total_loss / count_losses}")
+        # print(f"Test Acc: {acc} Loss : {total_loss / count_losses}")
 
         if not self.rating_df_unlabeld is None:
             unlabeld = data_utils.TensorDataset(self.rating_df_unlabeld, torch.zeros(len(self.rating_df_unlabeld)))
@@ -155,14 +162,20 @@ class ratingPredictor(nn.Module):
         acc, all_outs = self.test_single_epoch()
         trial_count = 10
         acc = 0
+        total_count = 0
         while trial_count > 0:
+            total_count += 1
             self.train_single_epoch(optimizer)
             new_acc, all_outs = self.test_single_epoch()
+            if total_count % 5 == 0:
+                print(new_acc)
             if new_acc <= acc:
                 trial_count -= 1
             else:
                 trial_count = 10
                 acc = new_acc
+            if total_count >= 20:
+                trial_count = 0
 
         if not self.rating_df_unlabeld is None:
             pmax, _ = torch.max(all_outs, dim=1)
@@ -175,15 +188,15 @@ class ratingPredictor(nn.Module):
             # self.unlabeld_strs = self.unlabeld_strs[pidx]
             self.unlabeld_strs = np.array(self.unlabeld_strs)[pidx.astype(int)]
 
-            plt.plot(pmax[pidx], color = colors[count])
-            plt.legend([str(i) for i in range(0, count + 1)], loc ="lower right")
+            plt.plot(pmax[pidx], color = colors[int(count//5)])
+            plt.legend([str(i) for i in range(0, count + 1, 5)], loc ="lower right")
             plt.savefig(f"look.pdf")
             plt.show()
-            self.label_manually(5)
+            self.label_manually(3)
 
 
         if count < max_count:
-            self.train(optimizer, count=count+1)
+            self.train(optimizer, count=count+1, max_count=max_count)
 
 def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):
     if rating_flag:

@@ -290,8 +290,8 @@ class ruleMiningClass(nn.Module):
         self.knn_avg = df.rating.mean()
 
         test_pred = ratingPredictor(df_new, df["rating"])
-        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=0.0005)
-        test_pred.train(self.pred_optim, count=0, max_count=2)
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-5)
+        test_pred.train(self.pred_optim, count=0, max_count=9)
         self.pred_pattern = test_pred
         return knn
 
@@ -922,8 +922,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             # plt.show()
             # factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
-            model.pred_pattern.train(model.pred_optim, count=0, max_count=5)
-
+            model.pred_pattern.train(model.pred_optim, count=0, max_count=3)
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
