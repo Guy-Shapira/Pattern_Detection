@@ -34,8 +34,8 @@ from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
 
-CSV_PATH = "Patterns/pattern17_temp.csv"
-CSV_PATH_FINAL = "Patterns/pattern17.csv"
+CSV_PATH = "Patterns/pattern22_temp.csv"
+CSV_PATH_FINAL = "Patterns/pattern22.csv"
 
 # #
 # from base.Formula import (
@@ -461,24 +461,44 @@ def pattern_complexity(events, actions, comp_values, conds, max_events, max_ops,
     return result
 
 
-def new_mapping(event, reverse=False, random=False):
+# def new_mapping(event, reverse=False, random=False):
+#     """
+#     This should be replaced by real mapping!
+#     :param event: model's tagged event
+#     :return: the actual event
+#     """
+#     values = [4, 8, 10, 13, 47, 49, 19, 53, 23, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 105]
+#     if random:
+#         weights = [5 if i in [4, 8, 10] else 1 for i in values]
+#         weights = np.array(weights)
+#         weights = weights/sum(weights)
+#         event = np.random.choice(len(values), p=weights)
+#     if reverse:
+#         return values.index(int(event))
+#     else:
+#         return values[event]
+#
+
+def new_mapping(event, events, reverse=False, random=False):
     """
-    This should be replaced by real mapping!
     :param event: model's tagged event
+    :param events: all events in the stream
+    :param reverse: flag that indicates if we want event value or index in list
+    :param random: flag that indicates if we want to sample random event or not
     :return: the actual event
     """
-    values = [4, 8, 10, 13, 47, 49, 19, 53, 23, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 105]
     if random:
-        weights = [5 if i in [4, 8, 10] else 1 for i in values]
-        weights = np.array(weights)
-        weights = weights/sum(weights)
-        event = np.random.choice(len(values), p=weights)
+        event = np.random.choice(events)
+        return event
     if reverse:
-        return values.index(int(event))
+        # print(events)
+        # print(np.where(events == int(event)))
+        # print(np.where(events == int(event))[0])
+        # print(np.where(events == int(event))[0][0])
+        # return (np.where(events == int(event))[0][0]) # Football
+        return (np.where(events == event)[0][0])  # StarPilot
     else:
-        return values[event]
-
-
+        return events[event]
 
 def get_action_type(mini_action, total_actions, actions, match_max_size):
     """

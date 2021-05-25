@@ -18,6 +18,13 @@ from Model.utils import (
     replace_values,
     run_OpenCEP,
 )
+
+from Model.rating_module import (
+    rating_main,
+    ratingPredictor,
+
+)
+
 import tqdm
 import pathlib
 from bayes_opt import BayesianOptimization
@@ -43,9 +50,12 @@ from sklearn.neighbors import KNeighborsClassifier as KNN
 import wandb
 from bayes_opt import BayesianOptimization
 import json
+
+
+
 GRAPH_VALUE = 50
 GAMMA = 0.99
-EMBDEDDING_TOTAL_SIZE = 21
+EMBDEDDING_TOTAL_SIZE = 1
 PAD_VALUE = -5.5
 class_inst = None
 num_epochs_trained = None
@@ -69,14 +79,14 @@ class ruleMiningClass(nn.Module):
         init_flag=False,
         hidden_size1=512,
         hidden_size2=2048,
+        exp_name="Football"
     ):
         super().__init__()
         self.lr = lr
-        # self.actions = [">", "<", "=", "+>", "->", "*="]
+        self.exp_name = exp_name
         self.actions = [">", "<", "="]
-        # self.actions = [">", "<", "=", "+>", "->", "*]
         self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
-        self.events = np.loadtxt(events_path, dtype='int')
+        self.events = np.loadtxt(events_path, dtype='str')
         self.num_events = len(self.events)
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -86,14 +96,18 @@ class ruleMiningClass(nn.Module):
         self.embedding_values = [nn.Embedding(max_val, 3) for max_val in max_values]
         self.pattern_path = pattern_path.split("/")[-1].split(".")[0]
         if init_flag:
-            if not os.path.exists(f"Processed_Data/{self.window_size}.pt"):
+            if not os.path.exists(f"Processed_Data/{self.exp_name}/{self.window_size}.pt"):
                 self.data = self._create_data(data_path)
                 self.data = self.data.view(len(self.data), -1)
                 self.data = self.data.detach().clone().requires_grad_(True)
-                torch.save(self.data, f"Processed_Data/{self.window_size}.pt")
+                torch.save(self.data, f"Processed_Data/{self.exp_name}/{self.window_size}.pt")
             else:
-                self.data = torch.load(f"Processed_Data/{self.window_size}.pt").requires_grad_(True)
-
+                self.data = torch.load(f"Processed_Data/{exp_name}/{self.window_size}.pt").requires_grad_(True)
+                # print(self.data)
+        # input("finished data creation")
+        global EMBDEDDING_TOTAL_SIZE
+        # EMBDEDDING_TOTAL_SIZE = 3 * (len(eff_cols) + 1)
+        EMBDEDDING_TOTAL_SIZE = 8
         self.hidden_size1 = hidden_size1
         self.hidden_size2 = hidden_size2
         self.num_cols = len(eff_cols)
@@ -126,6 +140,8 @@ class ruleMiningClass(nn.Module):
         self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
 
         # self._create_training_dir(data_path)
+        # input("finished training dir creation")
+
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         self.all_cols = all_cols
         self.cols = eff_cols
@@ -166,15 +182,23 @@ class ruleMiningClass(nn.Module):
         self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
         self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
 
+
     def layers_hidden(self, hidden_size1, hidden_size2):
+        global EMBDEDDING_TOTAL_SIZE
+        EMBDEDDING_TOTAL_SIZE = 8
         self.hidden_size1 = hidden_size1
         self.hidden_size2 = hidden_size2
         self.linear_base = nn.Linear(
             self.window_size * EMBDEDDING_TOTAL_SIZE,
             self.hidden_size1,
         ).cuda()
+        self.dropout = nn.Dropout(p=0.4).cuda()
+        self.spread_patterns = nn.Linear(
+            (self.match_max_size + 1) * (self.num_cols + 1),
+            self.hidden_size1,
+        ).cuda()
         self.linear_finish = nn.Linear(
-            self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
+            2 * self.hidden_size1,
             self.hidden_size2,
         ).cuda()
         self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
@@ -210,11 +234,12 @@ class ruleMiningClass(nn.Module):
         self.list_of_dfs = []
         df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
         df.rating = df.rating.apply(lambda x : round(float(x) + 0.5))
-
+        # print(os.path.exists(f"Processed_knn/{self.pattern_path}"))
         if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
             print("Creating Knn!")
             os.mkdir(f"Processed_knn/{self.pattern_path}")
-            str_list_columns = ["conds", "actions"]
+            # str_list_columns = ["conds", "actions"]
+            str_list_columns = ["actions"]
             int_list_columns = ["events"]
             fit_columns = int_list_columns + str_list_columns
             df_new = None
@@ -234,8 +259,9 @@ class ruleMiningClass(nn.Module):
                     temp_dict['Nan'] = -1
                     add_df.append(temp_dict)
                 self.list_of_dfs.append(add_df)
-                if not os.path.exists(f"Processed_knn/{self.pattern_path}/dicts"):
-                    os.mkdir(f"Processed_knn/{self.pattern_path}/dicts")
+
+                if not os.path.exists(f"Processed_knn/{self.pattern_path}/dicts/"):
+                    os.mkdir(f"Processed_knn/{self.pattern_path}/dicts/")
                 with open(f"Processed_knn/{self.pattern_path}/dicts/{len(self.list_of_dfs)}", 'w') as fp:
                     json.dump(add_df, fp)
 
@@ -250,8 +276,6 @@ class ruleMiningClass(nn.Module):
 
 
             df_new.to_csv(f"Processed_knn/{self.pattern_path}/df", index=False)
-            # print(df_new)
-            # exit()
 
         else:
             file_names = os.listdir(f"Processed_knn/{self.pattern_path}/dicts")
@@ -259,81 +283,131 @@ class ruleMiningClass(nn.Module):
                 with open(f"Processed_knn/{self.pattern_path}/dicts/{file_name}", "r") as read_file:
                     self.list_of_dfs.append(json.load(read_file))
             df_new = pd.read_csv(f"Processed_knn/{self.pattern_path}/df")
-            # print(df_new)
-            # exit()
+
 
         knn = KNN(n_neighbors=1)
         knn.fit(df_new, df["rating"])
         self.knn_avg = df.rating.mean()
+
+        test_pred = ratingPredictor(df_new, df["rating"])
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=0.0005)
+        test_pred.train(self.pred_optim, count=0, max_count=2)
+        self.pred_pattern = test_pred
         return knn
 
     def _create_data(self, data_path):
         date_time_obj = None
-        data = None
-        print(data_path)
-        with open(data_path) as f:
-            for line in f:
-                values = line.split("\n")[0]
-                values = values.split(",")
-                event = values[0]
-                event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
-                values = values[2:] # skip sid and ts
-                try:
-                    embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values[:len(self.normailze_values)])]
-                    embed_values.insert(0, event)
-                except Exception as e:
-                    embed_values = []
-                    print(e)
-                    print(values)
-                    print(len(values))
-                    print(line)
-                    for i, value in enumerate(values[:len(self.normailze_values)]):
-                        print(i)
-                        print(value)
-                        a = self.normailze_values[i]
-                        print(a)
-                        a = torch.tensor(int(value) + a)
-                        print(a)
-                        a = self.embedding_values[i](a)
-                        print(a)
-                        embed_values.append(a)
-                if data is None:
-                    data = torch.cat(tuple(embed_values), 0)
-                    # filler = torch.tensor([PAD_VALUE] * (self.max_predict - len(data)))
-                    # data = torch.cat((data, filler))
-                    data = data.unsqueeze(0)
+        all_data = None
+        if self.exp_name == "Football":
+            with open(data_path) as f:
+                for line in f:
+                    values = line.split("\n")[0]
+                    values = values.split(",")
+                    event = values[0]
+                    event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
+                    values = values[2:] # skip sid and ts
+                    try:
+                        embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values[:len(self.normailze_values)])]
+                        embed_values.insert(0, event)
+                    except Exception as e:
+                        embed_values = []
+                        for i, value in enumerate(values[:len(self.normailze_values)]):
+                            a = self.normailze_values[i]
+                            a = torch.tensor(int(value) + a)
+                            a = self.embedding_values[i](a)
+                            embed_values.append(a)
+                    if data is None:
+                        data = torch.cat(tuple(embed_values), 0)
+                        data = data.unsqueeze(0)
+                    else:
+                        new_data = torch.cat(tuple(embed_values), 0)
+                        new_data = new_data.unsqueeze(0)
+                        data = torch.cat((data, new_data), 0)
+
+            sliding_window_data = None
+            for i in range(0, len(data) - self.window_size):
+                if i % 1000 == 0:
+                    print(i)
+                if sliding_window_data is None:
+                    sliding_window_data = data[i : i + self.window_size]
+                    sliding_window_data = sliding_window_data.unsqueeze(0)
                 else:
-                    new_data = torch.cat(tuple(embed_values), 0)
-                    # filler = torch.tensor([PAD_VALUE] * (self.max_predict - len(new_data)))
-                    # new_data = torch.cat((new_data, filler))
+                    to_add = data[i : i + self.window_size].unsqueeze(0)
+                    sliding_window_data = torch.cat((sliding_window_data, to_add))
 
-                    new_data = new_data.unsqueeze(0)
-                    data = torch.cat((data, new_data), 0)
+            all_data = sliding_window_data
 
-        sliding_window_data = None
-        for i in range(0, len(data) - self.window_size):
-            if i % 1000 == 0:
-                print(i)
-            if sliding_window_data is None:
-                sliding_window_data = data[i : i + self.window_size]
-                sliding_window_data = sliding_window_data.unsqueeze(0)
-            else:
-                to_add = data[i : i + self.window_size].unsqueeze(0)
-                sliding_window_data = torch.cat((sliding_window_data, to_add))
-        return sliding_window_data
+        elif self.exp_name == "StarPilot":
+            files = os.listdir(data_path)[:300]
+            for file in files:
+                data = None
+                sliding_window_data = None
+
+                with open(os.path.join(data_path,file)) as f:
+                    for line in f:
+                        values = line.split("\n")[0]
+                        values = values.split(",")
+                        event = values[1]
+                        event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
+                        event = event.detach().numpy()
+                        values = values[2:] # skip sid and ts
+                        values = np.concatenate((event, values))
+                        values = [float(val) for val in values]
+                        if data is None:
+                            data = torch.tensor(values)
+                            data = data.unsqueeze(0)
+                        else:
+                            new_data = torch.tensor(values)
+                            new_data = new_data.unsqueeze(0)
+                            data = torch.cat((data, new_data), 0)
+
+
+                for i in range(0, len(data) - self.window_size):
+                    if sliding_window_data is None:
+                        sliding_window_data = data[i : i + self.window_size]
+                        sliding_window_data = sliding_window_data.unsqueeze(0)
+                    else:
+                        to_add = data[i : i + self.window_size].unsqueeze(0)
+                        sliding_window_data = torch.cat((sliding_window_data, to_add))
+
+                if all_data is None:
+                    all_data = sliding_window_data
+                else:
+                    all_data = torch.cat((all_data, sliding_window_data))
+        else:
+            raise Exception("Data set not supported!")
+
+        return all_data
 
     def _create_training_dir(self, data_path):
         if not os.path.exists("Model/training/"):
             os.mkdir("Model/training/")
         lines = []
-        with open(data_path) as f:
-            for line in f:
-                lines.append(line)
+        if self.exp_name == "Football":
+            with open(data_path) as f:
+                for line in f:
+                    lines.append(line)
 
-        for i in range(0, len(lines) - self.window_size):
-            with open("Model/training/{}.txt".format(i), "w") as f:
-                for j in range(i, i + self.window_size):
-                    f.write(lines[j])
+            for i in range(0, len(lines) - self.window_size):
+                with open("Model/training/{}.txt".format(i), "w") as f:
+                    for j in range(i, i + self.window_size):
+                        f.write(lines[j])
+        elif self.exp_name == "StarPilot":
+            current_files_created = 0
+            files = os.listdir(data_path)[:200]
+            for file in files:
+                lines = []
+                with open(os.path.join(data_path, file)) as f:
+                    for line in f:
+                        lines.append(line)
+
+                    for i in range(0, len(lines) - self.window_size):
+                        with open(f"Model/training/{str(current_files_created)}.txt", "w") as new_file:
+                            for j in range(i, i + self.window_size):
+                                new_file.write(lines[j])
+                        current_files_created += 1
+        else:
+            raise Exception("Data set not supported")
 
     def forward(self, input, old_desicions, mask, training_factor=0.0, T=1):
         def masked_softmax(vec, mask, dim=1, T=1):
@@ -349,9 +423,9 @@ class ruleMiningClass(nn.Module):
 
         x1 = self.dropout(self.linear_base(input.cuda())).cuda()
         x2 = self.spread_patterns(old_desicions.cuda()).cuda()
-        global num_epochs_trained
-        if num_epochs_trained >= 1:
-        # if np.random.rand() <= 1 - training_factor:
+        # global num_epochs_trained
+        # if num_epochs_trained >= 1:
+        if np.random.rand() <= 1 - training_factor:
             x1 *= 0.1
             x2 *= 1.5
         combined = torch.cat((x1, x2)).cuda()
@@ -365,7 +439,6 @@ class ruleMiningClass(nn.Module):
         return event_after_softmax, value_reward, value_rating
 
     def get_event(self, input,old_desicions, index=0, mask=None, training_factor=0.0, T=1):
-        # print(input.shape)
         probs, value_reward, value_rating = self.forward(Variable(input), Variable(old_desicions), mask, training_factor=training_factor, T=T)
         numpy_probs = probs.detach().cpu().numpy()
         action = np.random.choice(
@@ -432,9 +505,7 @@ class ruleMiningClass(nn.Module):
         comps_to = []
         after_base = self.dropout(self.linear_base(data))
         after_pattern = self.spread_patterns(old_desicions.cuda())
-        # if np.random.rand() <= 1 - training_factor:
-        global num_epochs_trained
-        if num_epochs_trained >= 1:
+        if np.random.rand() <= 1 - training_factor:
             after_base *= 0.1
             after_pattern *= 1.5
 
@@ -511,7 +582,8 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
-    run_name = "spread_test_window=500"
+    # run_name = "second_level_setup_all_lr" + str(model.lr)
+    run_name = f"StarPilot Exp!"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -542,10 +614,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     )
     max_rating = []
     entropy_term, turn_flag = 0, 0
-    training_factor = 0.8
+    training_factor = 0.6
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
-    total_count = -25
+    total_count = -5
     # total_count = 0
     global num_epochs_trained
     for epoch in range(num_epochs):
@@ -554,11 +626,13 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
         else:
             num_epochs_trained += 1
         print(f"Not finished = {not_finished_count}\n")
-        if epoch > 1:
+        if epoch > 1 and epoch % 2 == 0 :
             for g in model.optimizer.param_groups:
                 g['lr'] *= 0.85
 
-        if epoch < 1:
+        if epoch < 2:
+            temper = 0.25
+        elif epoch < 4:
             temper = 0.5
         else:
             temper = 1
@@ -696,38 +770,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             not_finished_count += 1
 
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-                        if rating_flag:
-                            predict_pattern = None
-                            try:
-                                for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
-                                    arr = arr.copy()
-                                    temp_pd = model.list_of_dfs[arr_index].copy()
-                                    arr += ["Nan"] * (len(temp_pd) - len(arr))
-                                    arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
-                                    to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
+                        rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=True)
 
-                                    if predict_pattern is None:
-                                        predict_pattern = to_add
-                                    else:
-                                        predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
-
-                            # print(model.knn)
-                            # print(predict_pattern)
-                                rating = model.knn.predict(predict_pattern).item()
-                            except Exception as e:
-                                print(e)
-                                rating = model.knn_avg
-                            if len(events) >= 3:
-                                rating *= 1.25
-                            if "=" in flatten(all_conds):
-                                rating *= 1.2
-                            ratings.append(rating)
-                            rating -= (model.knn_avg - 0.5)
-                            normalize_rating.append(rating)
-                        else:
-                            rating = 1
-                            ratings.append(rating)
-                            normalize_rating.append(rating)
+                        ratings.append(rating)
+                        normalize_rating.append(norm_rating)
 
                         if not finished_flag:
                             reward = -5
@@ -743,9 +789,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                 reward = int(content.count("\n") / (len(actions) + 1))
                                 if reward > model.max_fine_app:
                                     reward = -1
-                                reward *= (1 + (len(events) - 1)/5)
+
+                                # else:
+                                    # reward *= (1 + (len(events) - 1)/5)
                                 real_rewards.append(reward)
-                                if reward == 0:
+                                if reward == 0 and turn_flag:
                                     normalize_reward.append(-25)
                                     rewards.append(-1.5)
                                     break
@@ -772,8 +820,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     Qval = Qval_reward.detach().cpu().numpy()[0]
                 del data
                 gc.collect()
-                # if total_count < 0:
-                #     send_rewards = rewards
                 if turn_flag == 0:
                     send_rewards = ratings
                 else:
@@ -797,9 +843,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
                 if in_round_count % 2 == 0:
                     sys.stdout.write(
-                        "\nReal reward : {}, Rating {},  comparisons : {}\n".format(
+                        "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
                             real_rewards[index_max],
                             ratings[index_max],
+                            np.max(ratings),
                             sum([t != "nop" for sub in comp_values for t in sub]),
                         )
                     )
@@ -821,66 +868,68 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     for g in model.optimizer.param_groups:
                         g['lr'] *= 0.5
                     break
+            #
+            #
+            # rating_groups = [
+            #     np.mean(rating_plot[t : t + GRAPH_VALUE])
+            #     for t in range(0, len(rating_plot), GRAPH_VALUE)
+            # ]
+            # max_ratings_group = [
+            #     np.mean(max_rating[t: t + GRAPH_VALUE])
+            #     for t in range(0, len(max_rating), GRAPH_VALUE)
+            # ]
+            # real_groups = [
+            #     np.mean(real[t : t + GRAPH_VALUE])
+            #     for t in range(0, len(real), GRAPH_VALUE)
+            # ]
+            # for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
+            #     wandb.log({"reward": rew, "rating": rat, "max rating": max_rat})
+            # fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
+            #
+            # ax1.set_xlabel("Episode")
+            # ax1.set_title("Reward vs number of episodes played")
+            # labels = [
+            #     "{}-{}".format(t, t + GRAPH_VALUE)
+            #     for t in range(0, len(real), GRAPH_VALUE)
+            # ]
+            # locations = [
+            #     t + int(GRAPH_VALUE / 2) for t in range(0, len(real), GRAPH_VALUE)
+            # ]
+            # plt.sca(ax1)
+            # plt.xticks(locations, labels)
+            #
+            # ax1.scatter(locations, real_groups, c="g")
+            # ax1.set_ylabel("Avg Matches per window")
+            #
+            # ax1.plot()
+            #
+            # locations = [
+            #     t + int(GRAPH_VALUE / 2) for t in range(0, len(rating_plot), GRAPH_VALUE)
+            # ]
+            # ax2.set_ylabel("Avg Rating per window")
+            # ax2.set_xlabel("Episode")
+            # ax2.set_title("Rating vs number of episodes played")
+            # plt.sca(ax2)
+            # plt.xticks(locations, labels)
+            #
+            # ax2.scatter(locations, rating_groups, c="g")
+            # ax2.scatter(locations, max_ratings_group, c="r")
+            # ax2.plot()
+            # str_split_factor = str(split_factor * 100) + "%"
+            # if not os.path.exists(f"Graphs/{str_split_factor}/"):
+            #     os.mkdir(f"Graphs/{str_split_factor}/")
+            # plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}_{model.window_size}.pdf")
+            # plt.show()
+            # factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
-
-            rating_groups = [
-                np.mean(rating_plot[t : t + GRAPH_VALUE])
-                for t in range(0, len(rating_plot), GRAPH_VALUE)
-            ]
-            max_ratings_group = [
-                np.mean(max_rating[t: t + GRAPH_VALUE])
-                for t in range(0, len(max_rating), GRAPH_VALUE)
-            ]
-            real_groups = [
-                np.mean(real[t : t + GRAPH_VALUE])
-                for t in range(0, len(real), GRAPH_VALUE)
-            ]
-            for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
-                wandb.log({"reward_hidden": rew, "rating_hidden": rat, "max rating_hidden": max_rat})
-            fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
-
-            ax1.set_xlabel("Episode")
-            ax1.set_title("Reward vs number of episodes played")
-            labels = [
-                "{}-{}".format(t, t + GRAPH_VALUE)
-                for t in range(0, len(real), GRAPH_VALUE)
-            ]
-            locations = [
-                t + int(GRAPH_VALUE / 2) for t in range(0, len(real), GRAPH_VALUE)
-            ]
-            plt.sca(ax1)
-            plt.xticks(locations, labels)
-
-            ax1.scatter(locations, real_groups, c="g")
-            ax1.set_ylabel("Avg Matches per window")
-
-            ax1.plot()
-
-            locations = [
-                t + int(GRAPH_VALUE / 2) for t in range(0, len(rating_plot), GRAPH_VALUE)
-            ]
-            ax2.set_ylabel("Avg Rating per window")
-            ax2.set_xlabel("Episode")
-            ax2.set_title("Rating vs number of episodes played")
-            plt.sca(ax2)
-            plt.xticks(locations, labels)
-
-            ax2.scatter(locations, rating_groups, c="g")
-            ax2.scatter(locations, max_ratings_group, c="r")
-            ax2.plot()
-            str_split_factor = str(split_factor * 100) + "%"
-            if not os.path.exists(f"Graphs/{str_split_factor}/"):
-                os.mkdir(f"Graphs/{str_split_factor}/")
-            plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}_{model.window_size}.pdf")
-            plt.show()
-            factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-
+            model.pred_pattern.train(model.pred_optim, count=0, max_count=5)
 
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
                     results.append(int(f.read().count("\n") / (max_len_best + 1)))
                 os.remove("Data/Matches/allMatches.txt")
+
     if test_epcohs:
         print(results)
         plt.plot(results, "g")
@@ -893,8 +942,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
         new_res = dict_res['rating'] / 10 + dict_res['reward'] / model.max_fine_app
         if new_res > best_res:
             best_res = new_res
-    return best_res
-    # return factor_results[-1], best_found
+    # return best_res
+    return best_res, best_found
 
 
 # def predict_window(model, i, data):
@@ -1075,14 +1124,14 @@ def bayesian_hidden_size_search(hidden_size):
     train_inst.layers_based_hidden(hidden_size)
     return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
 
+
 def bayesian_lr_search(lr):
     global class_inst
     train_inst = deepcopy(class_inst)
     train_inst.lr = lr
     train_inst.optimizer = torch.optim.Adam(train_inst.parameters(), lr=lr)
     print(train_inst.parameters())
-    # train_inst.layers_based_hidden(hidden_size)
-    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=50/100)
 
 
 def bayesian_hidden2_size_search(hidden_size):
@@ -1100,7 +1149,7 @@ def bayesian_hidden_search(hidden_size1, hidden_size2):
     hidden_size1 = int(hidden_size1)
     hidden_size2 = int(hidden_size2)
     train_inst.layers_hidden(hidden_size1, hidden_size2)
-    return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
+    return train(train_inst, num_epochs=5,  bs=200 , split_factor=50/100)
 
 
 def main(parser):
@@ -1120,13 +1169,9 @@ def main(parser):
     suggested_models = []
     all_patterns = []
 
-    # for split_factor in range(60, 90, 10):
-    # if 1:
-    # for window_size in range(450, 650, 50):
-    for split_factor in range(50, 55, 50):
-    # if 1:
-        # split_factor = 55
-        window_size = 500
+    # for window_size in [350, 450, 550]:
+    for split_factor in range(60, 80, 10):
+        # window_size = 375
         eff_split_factor = split_factor / 100
         global class_inst
         class_inst = ruleMiningClass(data_path=args.data_path,
@@ -1134,7 +1179,7 @@ def main(parser):
                                     events_path=args.events_path,
                                     num_events=args.num_events,
                                     match_max_size=args.max_size,
-                                    window_size=window_size,
+                                    window_size=args.window_size,
                                     max_fine_app=args.max_fine_app,
                                     max_values=max_vals,
                                     normailze_values=norm_vals,
@@ -1143,35 +1188,40 @@ def main(parser):
                                     max_time=args.pattern_max_time,
                                     hidden_size1=args.hidden_size1,
                                     hidden_size2=args.hidden_size2,
+                                    exp_name=args.exp_name,
                                     init_flag=True)
 
-        # optimizer = BayesianOptimization(
-        #     f=bayesian_hidden_search,
-        #     pbounds={'hidden_size1': (512, 2048), 'hidden_size2': (512, 2048)},
-        #     random_state=1,
-        # )
-        # optimizer.maximize(
-        #     init_points=3,
-        #     n_iter=5,
-        # )
-        result = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
-        # result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
-    #     all_patterns.append(patterns)
-    #     cuda_handle.empty_cache()
-    #     print(patterns)
-    #     results.update({split_factor: result})
-    #     suggested_models.append({split_factor: class_inst})
-    # print(results)
-    # pareto_results = np.array(list(results.values()))
-    # pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
-    # print(pareto_results)
-    # patero_results = is_pareto_efficient(pareto_results)
-    # good_patterns = []
-    # for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
-    #     if patero_res:
-    #         print(model)
-    #         good_patterns.extend(list(patterns.values()))
-    #         print(patterns)
+            # optimizer = BayesianOptimization(
+            #     f=bayesian_lr_search,
+            #     pbounds={'lr': (1e-9, 1e-6)},
+            #     random_state=1,
+            # )
+            # optimizer.maximize(
+            #     init_points=5,
+            #     n_iter=5,
+            # )
+            # result = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
+            # return
+        result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
+        all_patterns.append(patterns)
+        cuda_handle.empty_cache()
+        print(patterns)
+        results.update({split_factor: result})
+        suggested_models.append({split_factor: class_inst})
+    print(results)
+    pareto_results = np.array(list(results.values()))
+    pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
+    print(pareto_results)
+    patero_results = is_pareto_efficient(pareto_results)
+    good_patterns = []
+    for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
+        if patero_res:
+            print(model)
+            good_patterns.extend(list(patterns))
+            print(patterns)
+
+
+    run_OpenCEP(events=args.final_data_path, patterns=good_patterns, test_name="secondLevel27April")
     return
 
 
@@ -1180,22 +1230,27 @@ def main(parser):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=200, type=int, help='batch size')
-    parser.add_argument('--epochs', default=8, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=1e-5, type=float, help='starting learning rate')
-    parser.add_argument('--hidden_size1', default=512, type=int, help='hidden_size param for model')
-    parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
+    parser.add_argument('--epochs', default=7, type=int, help='num epochs to train')
+    parser.add_argument('--lr', default=1e-6, type=float, help='starting learning rate')
+    parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
+    parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
-    parser.add_argument('--max_fine_app', default=55, type=int, help='max appearance of pattnern in a single window')
-    parser.add_argument('--pattern_max_time', default=7, type=int, help='maximum time for pattern (seconds)')
-    parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
+    parser.add_argument('--max_fine_app', default=85, type=int, help='max appearance of pattnern in a single window')
+    parser.add_argument('--pattern_max_time', default=30, type=int, help='maximum time for pattern (seconds)')
+    parser.add_argument('--window_size', default=375, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41,type=int, help='number of unique events in data')
     parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
-    parser.add_argument('--events_path', default='Football/merged_events', help='path to list of events')
-    parser.add_argument('--pattern_path', default='Patterns/pattern17.csv', help='path to known patterns')
-    parser.add_argument('--final_data_path', default='Football/xal', help='path to next level data')
-    parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
-    parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
-    parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
-    parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--events_path', default='Football/events', help='path to list of events')
+    parser.add_argument('--pattern_path', default='Patterns/pattern16.csv', help='path to known patterns')
+    parser.add_argument('--final_data_path', default='store_folder/xaa', help='path to next level data')
+    # parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
+    # parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
+    # parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
+    # parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
+    parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
+    parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
+    parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--exp_name', default = 'StarPilot', type=str)
     torch.set_num_threads(50)
     main(parser)

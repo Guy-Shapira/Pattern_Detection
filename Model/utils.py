@@ -15,7 +15,9 @@ from plan.TreePlanBuilderFactory import TreePlanBuilderParameters
 from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
-from plugin.Football.Football_processed import DataFormatter
+
+# from plugin.Football.Football_processed import DataFormatter
+from plugin.StarPilot.StarPilot_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
 
@@ -256,7 +258,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
-@timeout_decorator.timeout(10)
+@timeout_decorator.timeout(100)
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
@@ -280,6 +282,10 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
         build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
         timedelta(seconds=max_time),
     )
+    # print(all_events)
+    # print(pattern)
+    # if len(all_events) >= 2:
+    #     exit()
     run_OpenCEP(str(index), [pattern])
     return pattern
 
@@ -313,14 +319,20 @@ def run_OpenCEP(
         events = FileInputStream(
             os.path.join(absolutePath, "Model", "training", "{}.txt".format(test_name))
         )
+        base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
+
     else:
         events = FileInputStream(
             os.path.join(absolutePath, events)
         )
-    base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
+        base_matches_directory = os.path.join(absolutePath, "StarPilot")
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
+    # print(output_file_name)
+    # print(test_name)
+    # print(patterns)
+    # input("wtf")
     return running_time
 
 
@@ -334,7 +346,12 @@ def new_mapping(event, events, reverse=False):
     :return: the actual event
     """
     if reverse:
-        return (np.where(events == int(event))[0][0])
+        # print(events)
+        # print(np.where(events == int(event)))
+        # print(np.where(events == int(event))[0])
+        # print(np.where(events == int(event))[0][0])
+        # return (np.where(events == int(event))[0][0]) # Football
+        return (np.where(events == event)[0][0])  # StarPilot
     else:
         return events[event]
 
@@ -543,8 +560,8 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
         if not val == "nop":
             return_dict.update({"x_" + str(count):
-                (max([df[col].min() - 1000, min_values[col_count] + 1]),
-                 min([df[col].max() + 1000, max_values[col_count] - 1]))
+                (max([df[col].min() - 10, min_values[col_count] + 1]),
+                 min([df[col].max() + 10, max_values[col_count] - 1]))
                  })
             count += 1
 

@@ -6,7 +6,6 @@ import random
 from Patterns.utils import (
     to_var,
     mapping,
-    OpenCEP_pattern,
     pattern_complexity,
     after_epoch_test,
     new_mapping,
@@ -27,6 +26,9 @@ import datetime
 from difflib import SequenceMatcher
 import pandas as pd
 from sklearn.neighbors import KNeighborsClassifier as KNN
+import argparse
+
+
 GRAPH_VALUE = 50
 GAMMA = 0.99
 EMBDEDDING_TOTAL_SIZE = 21
@@ -48,14 +50,17 @@ class genDataClass(nn.Module):
         window_size=350,
         max_count=2000,
         num_cols=5,
+        exp_name="Football",
+        events=None,
     ):
         super().__init__()
         # self.actions = [">", "<", "=", "+>", "->", "*="]
         self.actions = [">", "<", "="]
+        self.exp_name = exp_name
         self.all_actions = self.actions
         self.all_actions.extend(["not" + i for i in self.all_actions])
         self.all_actions.extend(["v" + i for i in self.all_actions])
-
+        self.events = events
         self.num_events = num_events
         self.match_max_size = match_max_size
         self.max_values = max_values
@@ -64,54 +69,55 @@ class genDataClass(nn.Module):
         self.embedding_events = nn.Embedding(num_events + 1, 3)
         self.embedding_values = [nn.Embedding(max_val, 3) for max_val in max_values]
         self.embedding_count = nn.Embedding(max_count, 3)
-        self.data = self._create_data(data_path)
+        # self.data = self._create_data(data_path)
+        self.data = torch.load(f"Processed_Data/{exp_name}/{self.window_size}.pt").requires_grad_(True)
+
         self.data = self.data.view(len(self.data), -1)
         self.hidden_size = 2048
         self.num_cols = num_cols
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
-        self.cols  = ["x", "y", "z", "vx", "vy"]
+        self.cols  = ["x", "y", "vx", "vy"]
 
 
+    # def _create_data(self, data_path):
+    #     date_time_obj = None
+    #     data = None
+    #     with open(data_path) as f:
+    #         for line in f:
+    #             values = line.split("\n")[0]
+    #             values = values.split(",")
+    #             event = values[0]
+    #             for k, v in zip(SAME_EVENTS.keys(), SAME_EVENTS.values()):
+    #                 if int(event) in v:
+    #                     event = str(k)
+    #                     break
+    #             event = self.embedding_events(torch.tensor(int(new_mapping(event, reverse=True))))
+    #             values = values[2:] # skip sid and ts
+    #             embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
+    #             embed_values.insert(0, event)
+    #             if data is None:
+    #                 data = torch.cat(tuple(embed_values), 0)
+    #                 data = data.unsqueeze(0)
+    #             else:
+    #                 new_data = torch.cat(tuple(embed_values), 0)
+    #                 new_data = new_data.unsqueeze(0)
+    #                 data = torch.cat((data, new_data), 0)
+    #
+    #     sliding_window_data = None
+    #     for i in range(0, len(data) - self.window_size):
+    #         if sliding_window_data is None:
+    #             sliding_window_data = data[i : i + self.window_size]
+    #             sliding_window_data = sliding_window_data.unsqueeze(0)
+    #         else:
+    #             to_add = data[i : i + self.window_size].unsqueeze(0)
+    #             sliding_window_data = torch.cat((sliding_window_data, to_add))
+    #     return sliding_window_data
+    #
 
-    def _create_data(self, data_path):
-        date_time_obj = None
-        data = None
-        with open(data_path) as f:
-            for line in f:
-                values = line.split("\n")[0]
-                values = values.split(",")
-                event = values[0]
-                for k, v in zip(SAME_EVENTS.keys(), SAME_EVENTS.values()):
-                    if int(event) in v:
-                        event = str(k)
-                        break
-                event = self.embedding_events(torch.tensor(int(new_mapping(event, reverse=True))))
-                values = values[2:] # skip sid and ts
-                embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
-                embed_values.insert(0, event)
-                if data is None:
-                    data = torch.cat(tuple(embed_values), 0)
-                    data = data.unsqueeze(0)
-                else:
-                    new_data = torch.cat(tuple(embed_values), 0)
-                    new_data = new_data.unsqueeze(0)
-                    data = torch.cat((data, new_data), 0)
 
-        sliding_window_data = None
-        for i in range(0, len(data) - self.window_size):
-            if sliding_window_data is None:
-                sliding_window_data = data[i : i + self.window_size]
-                sliding_window_data = sliding_window_data.unsqueeze(0)
-            else:
-                to_add = data[i : i + self.window_size].unsqueeze(0)
-                sliding_window_data = torch.cat((sliding_window_data, to_add))
-        return sliding_window_data
-
-
-
-def genData(model, num_epochs=8):
+def genData(model, num_epochs=4):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)  # need to remove + 1
@@ -121,14 +127,25 @@ def genData(model, num_epochs=8):
     mean_rewards = []
     real, mean_real = [], []
     test1, test2 = [], []
-    patterns_all = ["pass", "dribble", "two-run"] * 25 + ["random"] * 10
+    patterns_all = []
+    if model.exp_name == "Football":
+        patterns_all = ["pass", "dribble", "two-run"] * 25 + ["random"] * 10
+    elif model.exp_name == "StarPilot":
+        # patterns_all = ["finish", "random"]
+        patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
+        bullet_list = ["bullet" + str(i) for i in range(1,7)]
+        flyer_list = ["flyer" + str(i) for i in range(1,9)]
+        explosion_list = ["explosion" + str(i) for i in range(1,9)]
+    else:
 
-    # patterns_all = ["pass"] * 5 + ["random"] * 3 + ["dribble", "two-run"] * 3
-    # patterns_all = ["pass", "run", "random", "two-run"]
+        raise Exception("Data set not supported!")
+
+    # patterns_all = ["finish"]
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:800]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 800 :(epoch + 1) * 800]):
+        # assumes shit Model/training has relavent data!
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:700]), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data[epoch * 700 :(epoch + 1) * 700]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -298,8 +315,8 @@ def genData(model, num_epochs=8):
                     while not is_done:
                         if np.random.randint(10000 // (len(events) + 1)) < 5:
                             is_done = True
-                        event = new_mapping(1, random=True)
-                        action = new_mapping(event, reverse=True)
+                        event = new_mapping(1, events=model.events, random=True)
+                        action = new_mapping(event, events=model.events, reverse=True)
                         count += 1
                         if action == model.num_events:
                             if len(actions) == 0:
@@ -341,15 +358,17 @@ def genData(model, num_epochs=8):
                             if len(events) == 1:
                                 user_reward = np.random.uniform(0.8, 1.5)
                             else:
-                                events_ball = [4 if event in [4,8,10] else event for event in events]
+                                if model.exp_name == "Football":
+                                    events_ball = [4 if event in [4,8,10] else event for event in events]
+
                                 unique, app_count = np.unique(events, return_counts=True)
                                 for i in range(len(unique)):
                                     if unique[i] != 4:
                                         app_count[i] += 1
                                 for k in range(len(unique)):
-                                    user_reward += math.pow(0.7, k + 1) * app_count[k] * 1.5
+                                    user_reward += math.pow(0.7, k + 1) * app_count[k] * 1.3
 
-                                user_reward += 0.25 * sum([t != "nop" for sub in comp_values for t in sub])
+                                user_reward += 0.1 * sum([t != "nop" for sub in comp_values for t in sub])
 
                                 flat_conds = flatten(all_conds)
                                 if flat_conds.count("and") < 0.5 * len(flat_conds):
@@ -358,14 +377,15 @@ def genData(model, num_epochs=8):
                                 not_count = sum([str.startswith("not") for str in flat_actions])
                                 unique, app_count = np.unique(flat_actions, return_counts=True)
 
-                                # user_reward -= 0.5 * not_count
-                                ball_unique = np.unique(events_ball)
-                                if len(events_ball) >= 3 and len(ball_unique) == 1:
-                                    user_reward = np.random.uniform(0.3, 1.3)
-                                else:
-                                    num_non_ball = sum([1 if event != 4 else 0 for event in events_ball])
-                                    if len(events_ball) >= 5 and num_non_ball <= 2 :
+                                user_reward -= 0.2 * not_count
+                                if model.exp_name == "Football":
+                                    ball_unique = np.unique(events_ball)
+                                    if len(events_ball) >= 3 and len(ball_unique) == 1:
                                         user_reward = np.random.uniform(0.3, 1.3)
+                                    else:
+                                        num_non_ball = sum([1 if event != 4 else 0 for event in events_ball])
+                                        if len(events_ball) >= 5 and num_non_ball <= 2 :
+                                            user_reward = np.random.uniform(0.3, 1.3)
 
                         if (np.random.randint(5) or (len(test1) > 500 and user_reward > 10)):
                             if user_reward > 0:
@@ -373,20 +393,192 @@ def genData(model, num_epochs=8):
                                 test1.append(user_reward)
                         if count >= model.match_max_size:
                             is_done = True
+
+                elif pattern_type == "finish":
+                    in_between = random.choice([0, 1, 2])
+                    events = ["player"]
+                    next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    next_actions[0] = "="
+                    actions.append(next_actions)
+                    next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    next_conds[0] = "and"
+                    all_conds.append(next_conds)
+                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    comp_values.append(next_comp_vals)
+                    next_targets = random.choices(comp_targets, k=len(model.cols))
+                    next_targets[0] = 1 + in_between
+                    all_comps.append(next_targets)
+                    while in_between > 0:
+                        in_between -=1
+                        event = random.choice(bullet_list + flyer_list + explosion_list)
+                        events.append(event)
+                        next_targets = random.choices(comp_targets, k=len(model.cols))
+                        next_actions = random.choices(model.all_actions, k=len(model.cols))
+                        next_conds = random.choices(["and", "or"], k=len(model.cols))
+                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+
+                        comp_values.append(next_comp_vals)
+                        actions.append(next_actions)
+                        all_comps.append(next_targets)
+                        all_conds.append(next_conds)
+
+                    # add finish to the pattern
+                    events.append("finish")
+                    next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    actions.append(next_actions)
+                    next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    all_conds.append(next_conds)
+                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    comp_values.append(next_comp_vals)
+                    next_targets = random.choices(comp_targets, k=len(model.cols))
+                    all_comps.append(next_targets)
+
+                    for i in range(len(events)):
+                        str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
+                        user_reward = np.random.uniform(3*(i+1), 6*(i+1))
+                        # user_reward = i
+                        if i == len(events) - 1:
+                            user_reward *= 2
+                        if np.random.randint(4):
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            test2.append(user_reward)
+                    continue
+
+                elif pattern_type == "shot_alot":
+                    in_between = random.choice([1, 2, 3])
+                    events = ["player"]
+                    next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    actions.append(next_actions)
+                    next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    all_conds.append(next_conds)
+                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    comp_values.append(next_comp_vals)
+                    next_targets = random.choices(comp_targets, k=len(model.cols))
+                    all_comps.append(next_targets)
+                    while in_between > 0:
+                        in_between -= 1
+                        new_bullets = list(set(bullet_list) - set(events))
+                        event = random.choice(new_bullets)
+                        events.append(event)
+                        next_targets = random.choices(comp_targets, k=len(model.cols))
+                        next_actions = random.choices(model.all_actions, k=len(model.cols))
+                        next_conds = random.choices(["and", "or"], k=len(model.cols))
+                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+
+                        comp_values.append(next_comp_vals)
+                        actions.append(next_actions)
+                        all_comps.append(next_targets)
+                        all_conds.append(next_conds)
+
+                    # end of pattern
+                    end_events = random.choice([0, 1, 2])
+                    while end_events > 0:
+                        end_events -= 1
+                        event = random.choice(flyer_list + ["finish", "player"] + explosion_list)
+                        events.append(event)
+                        next_targets = random.choices(comp_targets, k=len(model.cols))
+                        next_actions = random.choices(model.all_actions, k=len(model.cols))
+                        next_conds = random.choices(["and", "or"], k=len(model.cols))
+                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+
+                        comp_values.append(next_comp_vals)
+                        actions.append(next_actions)
+                        all_comps.append(next_targets)
+                        all_conds.append(next_conds)
+
+                    for i in range(len(events)):
+                        str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
+                        user_reward = np.random.uniform(2.5 * (i+1), 4.5 * (i+1))
+                        if np.random.randint(4):
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            test2.append(user_reward)
+                    continue
+                # elif pattern_type == "run-back":
+                #     in_between = random.choice([0, 1, 2])
+                #     events = ["player"]
+                #     # events = ["player", "finish"]
+                #     next_actions = random.choices(model.all_actions, k=len(model.cols))
+                #     next_actions[0] = "="
+                #     actions.append(next_actions)
+                #     next_conds = random.choices(["and", "or"], k=len(model.cols))
+                #     next_conds[0] = "and"
+                #     all_conds.append(next_conds)
+                #     next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                #     comp_values.append(next_comp_vals)
+                #     next_targets = random.choices(comp_targets, k=len(model.cols))
+                #     next_targets[0] = 1 + in_between
+                #     all_comps.append(next_targets)
+                #     while in_between > 0:
+                #         in_between -=1
+                #         event = random.choice(bullet_list + flyer_list)
+                #         events.append(event)
+                #         next_targets = random.choices(comp_targets, k=len(model.cols))
+                #         next_actions = random.choices(model.all_actions, k=len(model.cols))
+                #         next_conds = random.choices(["and", "or"], k=len(model.cols))
+                #         next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                #
+                #         comp_values.append(next_comp_vals)
+                #         actions.append(next_actions)
+                #         all_comps.append(next_targets)
+                #         all_conds.append(next_conds)
+                #
+                #     # add finish to the pattern
+                #     events.append("finish")
+                #     next_actions = random.choices(model.all_actions, k=len(model.cols))
+                #     actions.append(next_actions)
+                #     next_conds = random.choices(["and", "or"], k=len(model.cols))
+                #     all_conds.append(next_conds)
+                #     next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                #     comp_values.append(next_comp_vals)
+                #     next_targets = random.choices(comp_targets, k=len(model.cols))
+                #     all_comps.append(next_targets)
+                #
+                #     for i in range(len(events)):
+                #         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
+                #         user_reward = np.random.uniform(3*(i+1), 6*(i+1))
+                #         if np.random.randint(4):
+                #             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                #             test2.append(user_reward)
+                #     continue
     print(np.mean(test1))
     print(np.mean(test2))
     return test1
 
 
 
-def main():
-    class_inst = genDataClass(data_path="Football/xaa", num_events=20,
-                                 max_values=[97000, 100000, 15000, 20000, 20000, 20000],
-                                 normailze_values=[24000, 45000, 6000, 9999, 9999, 9999])
+def main(parser):
+    args = parser.parse_args()
+    max_vals = [int(i) for i in args.max_vals.split(",")]
+    norm_vals = [int(i) for i in args.norm_vals.split(",")]
+    all_cols = args.all_cols.replace(" ", "").split(",")
+    eff_cols = args.eff_cols.replace(" ", "").split(",")
+    events = np.loadtxt(args.events_path, dtype='str')
+    num_events = len(events)
+    class_inst = genDataClass(
+                data_path=args.data_path,
+                num_events=num_events,
+                max_values=max_vals,
+                normailze_values=norm_vals,
+                exp_name=args.exp_name,
+                match_max_size=args.max_size,
+                window_size=args.window_size,
+                events=events
+                )
     test = genData(class_inst)
     normalizeData()
-    print (np.mean(test))
+    print(np.mean(test))
 
 if __name__ == "__main__":
     torch.set_num_threads(30)
-    main()
+    parser = argparse.ArgumentParser(description='CEP pattern miner')
+    parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
+    parser.add_argument('--pattern_max_time', default=50, type=int, help='maximum time for pattern (seconds)')
+    parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
+    parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
+    parser.add_argument('--events_path', default='Football/events', help='path to list of events')
+    parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
+    parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
+    parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
+    parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--exp_name', default = 'StarPilot', type=str)
+    main(parser)
