@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 
 PATTERN_LEN = 40
-MAX_RATING = 6
+MAX_RATING = 10
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -67,9 +67,9 @@ class ratingPredictor(nn.Module):
         self.linear_layer = nn.Linear(PATTERN_LEN, PATTERN_LEN // 2).cuda()
         self.linear_layer2 = nn.Linear(PATTERN_LEN // 2, MAX_RATING).cuda()
         weights = torch.ones(MAX_RATING)
-        # weights[0] = 0.7
+        weights[0] = 0.2
         # weights[1] = 0.4
-        # weights[-1] = 2
+        weights[-1] = 2
         # weights[-2] = 2.5
         # weights[-3] = 1.5
         weights = weights.cuda()
@@ -157,9 +157,9 @@ class ratingPredictor(nn.Module):
         self.unlabeld_events.append(events)
         res = self.predict(data)
         _, res = torch.max(res, dim=1)
-        return res.item()
+        return res.item() + 1
 
-    def train_single_epoch(self, optimizer, sched):
+    def train_single_epoch(self, optimizer, sched, total_count):
         correct = 0
         total_loss = 0
         count_losses, count_all = 0, 0
@@ -169,11 +169,11 @@ class ratingPredictor(nn.Module):
             optimizer.zero_grad()
             prediction = self.predict(input_x)
             _, max_val = torch.max(prediction, dim=1)
-            # loss = self.criterion(prediction, target) * self.m_factor
-            loss = self.criterion(prediction, target)
+            loss = self.criterion(prediction, target) * self.m_factor
+            # loss = self.criterion(prediction, target)
             # new_distance = torch.mean(abs(max_val - target).float()).requires_grad_(True)
             new_distance = l1_loss(max_val.float(), target.float()).requires_grad_(True)
-            # loss += distance * (1 - self.m_factor)
+            loss += new_distance * (1 - self.m_factor)
             distance += new_distance
             # loss = new_distance
             total_loss += loss.item()
@@ -182,14 +182,14 @@ class ratingPredictor(nn.Module):
             count_all += len(input_x)
             loss.backward(retain_graph=True)
             optimizer.step()
-
-        print(f"Train Avg distance {distance / len(self.train_loader)}")
+        if total_count % 10 == 0:
+            print(f"Train Avg distance {distance / len(self.train_loader)}")
         sched.step()
 
         acc = correct / count_all
         return acc
 
-    def test_single_epoch(self):
+    def test_single_epoch(self, total_count):
         correct = 0
         total_loss = 0
         count_losses, count_all = 0, 0
@@ -209,7 +209,8 @@ class ratingPredictor(nn.Module):
             count_all += len(input_x)
 
         acc = correct / count_all
-        print(f"Test Avg distance {distance / len(self.test_loader)}")
+        if total_count % 10 == 0:
+            print(f"Test Avg distance {distance / len(self.test_loader)}")
         if not self.rating_df_unlabeld is None:
             all_outputs = None
             unlabeld = data_utils.TensorDataset(self.rating_df_unlabeld, torch.zeros(len(self.rating_df_unlabeld)))
@@ -248,10 +249,10 @@ class ratingPredictor(nn.Module):
 
     def train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=100):
         torch.allow_unreachable=True
-        acc, all_outs = self.test_single_epoch()
+        total_count = 0
+        acc, all_outs = self.test_single_epoch(total_count)
         trial_count = 10
         acc = 0
-        total_count = 0
         weights = None
         while trial_count > 0:
             new_lr = optimizer.param_groups[0]['lr']
@@ -259,10 +260,9 @@ class ratingPredictor(nn.Module):
                 print(new_lr)
                 self.lr = new_lr
                 # input("Changed!")
-            total_count += 1
-            self.train_single_epoch(optimizer, sched)
-            new_acc, all_outs = self.test_single_epoch()
-            if total_count % 20 == 0:
+            self.train_single_epoch(optimizer, sched, total_count)
+            new_acc, all_outs = self.test_single_epoch(total_count)
+            if total_count % 10 == 0:
                 print(new_acc)
             if new_acc <= acc:
                 trial_count -= 1
@@ -271,6 +271,7 @@ class ratingPredictor(nn.Module):
                 acc = new_acc
             if total_count >= max_total_count:
                 trial_count = 0
+            total_count += 1
 
         if not self.rating_df_unlabeld is None:
             pmax, pmax_indexes = torch.max(all_outs, dim=1)

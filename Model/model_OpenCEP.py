@@ -232,7 +232,7 @@ class ruleMiningClass(nn.Module):
 
         self.list_of_dfs = []
         df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
-        df.rating = df.rating.apply(lambda x : round(float(x) + 0.2))
+        df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 9))
         # print(os.path.exists(f"Processed_knn/{self.pattern_path}"))
         if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
             print("Creating Knn!")
@@ -587,7 +587,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
-    run_name = f"StarPilot Exp!,  widow_size_{str(model.window_size)}"
+    run_name = f"StarPilot Exp!,  widow_size_{str(model.window_size)}, max_rating=10"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -640,10 +640,15 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             temper = 0.5
         else:
             temper = 1
+        currentPath = pathlib.Path(os.path.dirname(__file__))
+        absolutePath = str(currentPath.parent)
+        sys.path.append(absolutePath)
 
         with tqdm.tqdm(total=bs, file=pbar_file) as pbar:
             in_round_count = 0
-            for index in range(epoch, len(model.data), len(model.data) // bs):
+            path = os.path.join(absolutePath, "Model", "training")
+            data_len = len(os.listdir(path))
+            for index in range(epoch, data_len, data_len // bs):
                 if total_count >= bs:
                     total_count = 0
                     turn_flag = 1 - turn_flag
@@ -730,9 +735,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         actions.append(mini_actions)
 
 
-                        currentPath = pathlib.Path(os.path.dirname(__file__))
-                        absolutePath = str(currentPath.parent)
-                        sys.path.append(absolutePath)
                         file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(index))
 
                         all_conds.append(conds)
@@ -1233,7 +1235,7 @@ def main(parser):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
-    parser.add_argument('--bs', default=400, type=int, help='batch size')
+    parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--epochs', default=7, type=int, help='num epochs to train')
     parser.add_argument('--lr', default=1e-7, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')

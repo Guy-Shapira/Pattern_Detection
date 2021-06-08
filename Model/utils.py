@@ -550,18 +550,19 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
     :param min_values: list of minimum leagl values to chose values from
     :return: list of ranges for eache bayesian serach
     """
-    headers = ["event", "ts"] + cols
+    # headers = ["event", "ts"] + cols # Football
+    headers = ["ts", "event"] + cols # StarPilot
     return_dict = {}
     df = pd.read_csv(file, names=headers)
-    keep_cols = eff_cols + ["event"]
+    keep_cols = ["event"] + eff_cols
     df = df[keep_cols]
     df = df.loc[df['event'] == event] # todo, try to remove
     count = 0
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
         if not val == "nop":
             return_dict.update({"x_" + str(count):
-                (max([df[col].min() - 10, min_values[col_count] + 1]),
-                 min([df[col].max() + 10, max_values[col_count] - 1]))
+                (max([float(df[col].min()) - 10, min_values[col_count] + 1]),
+                 min([float(df[col].max() + 10), max_values[col_count] - 1]))
                  })
             count += 1
 
