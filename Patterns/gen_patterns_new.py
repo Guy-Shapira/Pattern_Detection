@@ -117,7 +117,7 @@ class genDataClass(nn.Module):
     #
 
 
-def genData(model, num_epochs=4):
+def genData(model, num_epochs=15):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)  # need to remove + 1
@@ -129,7 +129,7 @@ def genData(model, num_epochs=4):
     test1, test2 = [], []
     patterns_all = []
     if model.exp_name == "Football":
-        patterns_all = ["pass", "dribble", "two-run"] * 25 + ["random"] * 10
+        patterns_all = ["pass", "dribble", "two-run"] * 45 + ["random"] * 10
     elif model.exp_name == "StarPilot":
         # patterns_all = ["finish", "random"]
         patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
@@ -140,12 +140,12 @@ def genData(model, num_epochs=4):
 
         raise Exception("Data set not supported!")
 
-    # patterns_all = ["finish"]
+    # patterns_all = ["finish"] * 20 + ["random"] * 5
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
         # assumes shit Model/training has relavent data!
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:700]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 700 :(epoch + 1) * 700]):
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:800]), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data[epoch * 800 :(epoch + 1) * 800]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -387,10 +387,16 @@ def genData(model, num_epochs=4):
                                         if len(events_ball) >= 5 and num_non_ball <= 2 :
                                             user_reward = np.random.uniform(0.3, 1.3)
 
-                        if (np.random.randint(5) or (len(test1) > 500 and user_reward > 10)):
+                        # if (np.random.randint(5) or (len(test1) > 500 and user_reward > 10)):
+                        if np.random.randint(4) or (user_reward > np.mean(test1)):
                             if user_reward > 0:
-                                store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern)
-                                test1.append(user_reward)
+                                if user_reward < 5:
+                                    flag_add = False
+                                    if np.random.randint(max(1, int(user_reward - 1))):
+                                        flag_add = True
+                                if flag_add:
+                                    store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern)
+                                    test1.append(user_reward)
                         if count >= model.match_max_size:
                             is_done = True
 
@@ -439,7 +445,7 @@ def genData(model, num_epochs=4):
                         # user_reward = i
                         if i == len(events) - 1:
                             user_reward *= 2
-                        if np.random.randint(4):
+                        if np.random.randint(4) or (user_reward > np.mean(test2)):
                             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
                             test2.append(user_reward)
                     continue
@@ -489,7 +495,7 @@ def genData(model, num_epochs=4):
                     for i in range(len(events)):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
                         user_reward = np.random.uniform(2.5 * (i+1), 4.5 * (i+1))
-                        if np.random.randint(4):
+                        if np.random.randint(4) or (user_reward > np.mean(test2)):
                             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
                             test2.append(user_reward)
                     continue

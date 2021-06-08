@@ -4,13 +4,15 @@ import math
 import torch
 import torch.nn as nn
 import torch.utils.data as data_utils
+import torch.nn.functional as F
 import matplotlib
+import random
 matplotlib.use('pdf')
 import matplotlib.pyplot as plt
 
 
 PATTERN_LEN = 40
-MAX_RATING = 11
+MAX_RATING = 6
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -26,63 +28,113 @@ class ratingPredictor(nn.Module):
         ratings_col,
     ):
         super().__init__()
-        self.rating_df_train = rating_df[:1200]
-        self.ratings_col_train = ratings_col[:1200]
+        ratings_col = ratings_col.apply(lambda x: min(x, 5))
+        self.rating_df_train = rating_df[:3500]
+        self.ratings_col_train = ratings_col[:3500]
+        # ax = self.ratings_col_train.plot.hist(bins=6, alpha=0.5)
+        # plt.savefig(f"look.pdf")
+        # plt.show()
+        # input("continue")
+        # plt.clf()
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
 
-        self.rating_df_test = rating_df[1000:7500]
-        self.ratings_col_test = ratings_col[1000:7500]
+        self.rating_df_test = rating_df[4000:]
+        self.ratings_col_test = ratings_col[4000:]
+        self.m_factor = 0.9
 
         self.rating_df_test = df_to_tensor(self.rating_df_test)
         self.ratings_col_test = df_to_tensor(self.ratings_col_test, True)
 
-        self.rating_df_unlabeld = None
-        self.unlabeld_strs = []
-        self.unlabeld_events = []
-        self.linear_layer = nn.Linear(PATTERN_LEN, MAX_RATING).cuda()
-        self.criterion = nn.CrossEntropyLoss()
-        train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
-        self.train_loader = data_utils.DataLoader(train, batch_size=10)
-        test = data_utils.TensorDataset(self.rating_df_test, self.ratings_col_test)
-        self.test_loader = data_utils.DataLoader(test, batch_size=50)
-        self.softmax = nn.Softmax()
+        self.rating_df_unlabeld = rating_df[3500:4000]
+        self.unlabeld_strs = ratings_col[3500:4000]
 
-    def label_manually(self, n):
+        self.dropout = nn.Dropout(p=0.3)
+
+        # ax = self.unlabeld_strs.plot.hist(bins=6, alpha=0.5)
+        # plt.savefig(f"look.pdf")
+        # plt.show()
+        # # input("continue")
+        # plt.clf()
+
+        self.rating_df_unlabeld = df_to_tensor(self.rating_df_unlabeld)
+        self.unlabeld_strs = df_to_tensor(self.unlabeld_strs, True).cpu()
+
+        # self.rating_df_unlabeld = None
+        # self.unlabeld_strs = []
+        self.unlabeld_events = []
+        self.linear_layer = nn.Linear(PATTERN_LEN, PATTERN_LEN // 2).cuda()
+        self.linear_layer2 = nn.Linear(PATTERN_LEN // 2, MAX_RATING).cuda()
+        weights = torch.ones(MAX_RATING)
+        # weights[0] = 0.7
+        # weights[1] = 0.4
+        # weights[-1] = 2
+        # weights[-2] = 2.5
+        # weights[-3] = 1.5
+        weights = weights.cuda()
+        self.criterion = nn.CrossEntropyLoss(weight=weights)
+        train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
+        self.train_loader = data_utils.DataLoader(train, batch_size=64)
+        test = data_utils.TensorDataset(self.rating_df_test, self.ratings_col_test)
+        self.test_loader = data_utils.DataLoader(test, batch_size=512)
+        self.softmax = nn.Softmax()
+        self.lr = 5e-3
+
+    def label_manually(self, n, weights):
+        def del_elements(containter, indexes):
+            keep_indexes = list(set(list(range(len(containter)))) - set(indexes))
+
+            if isinstance(containter, list):
+                containter = np.array(containter)
+                containter = list(containter[keep_indexes])
+            else:
+                containter = containter[keep_indexes]
+            return containter
         if self.rating_df_unlabeld is None:
             raise Exception("do unlabeld data!")
         actuall_size = min(n, len(self.rating_df_unlabeld))
-        self.rating_df_train = torch.cat([self.rating_df_train, self.rating_df_unlabeld[:actuall_size]])
+        sampled_indexes = random.choices(range(len(self.rating_df_unlabeld)), k=actuall_size, weights=weights)
+        values = self.rating_df_unlabeld[sampled_indexes]
+        self.rating_df_train = torch.cat([self.rating_df_train, values])
         user_ratings = []
 
-        for str_pattern, events in zip(self.unlabeld_strs[:actuall_size], self.unlabeld_events[:actuall_size]):
-            # print(self.unlabeld_events[:actuall_size])
-            # exit()
-            print(events)
-            print(str_pattern)
-            user_rating = None
-            while user_rating is None:
-                user_rating = input("enter rating ")
-                try:
-                    user_rating = int(user_rating)
-                except ValueError:
-                    user_rating = int(input("retry: enter rating "))
-            user_ratings.append(user_rating)
+        # print(f"Len! :{len(self.unlabeld_events)}")
+        # input("see")
+        if len(self.unlabeld_events) == 0:
+            user_ratings = np.array(self.unlabeld_strs)[sampled_indexes]
+            # for label in labels:
+            #     user_ratings.append(label)
+
+        else:
+            for str_pattern, events in zip(np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes]):
+                print(events)
+                print(str_pattern)
+                user_rating = None
+                while user_rating is None:
+                    user_rating = input("enter rating ")
+                    try:
+                        user_rating = int(user_rating)
+                    except ValueError:
+                        user_rating = int(input("retry: enter rating "))
+                user_ratings.append(user_rating)
         user_ratings = torch.tensor(user_ratings).long().cuda()
         self.ratings_col_train = torch.cat([self.ratings_col_train, user_ratings])
 
-        self.rating_df_unlabeld = self.rating_df_unlabeld[actuall_size:]
-        self.unlabeld_strs = self.unlabeld_strs[actuall_size:]
-        self.unlabeld_events = self.unlabeld_events[actuall_size:]
+        self.rating_df_unlabeld = del_elements(self.rating_df_unlabeld, sampled_indexes)
+        self.unlabeld_strs = del_elements(self.unlabeld_strs, sampled_indexes)
+        self.unlabeld_events = del_elements(self.unlabeld_events, sampled_indexes)
 
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
-        self.train_loader = data_utils.DataLoader(train, batch_size=10)
-        self.unlabeld_strs = list(self.unlabeld_strs)
+        self.train_loader = data_utils.DataLoader(train, batch_size=40)
+        # self.unlabeld_strs = list(self.unlabeld_strs)
 
     def forward(self, data):
         data = torch.tensor(data).cuda()
         data = self.linear_layer(data)
+        data = self.dropout(data)
+        data = F.relu(data).cuda()
+        data = self.linear_layer2(data).cuda()
         return data
 
     def predict(self, data):
@@ -101,28 +153,38 @@ class ratingPredictor(nn.Module):
             print(type(self.unlabeld_strs))
             print(self.unlabeld_strs)
             raise e
+
         self.unlabeld_events.append(events)
         res = self.predict(data)
         _, res = torch.max(res, dim=1)
         return res.item()
 
-    def train_single_epoch(self, optimizer):
+    def train_single_epoch(self, optimizer, sched):
         correct = 0
         total_loss = 0
         count_losses, count_all = 0, 0
-
+        distance = 0
+        l1_loss = nn.L1Loss()
         for input_x, target in self.train_loader:
             optimizer.zero_grad()
             prediction = self.predict(input_x)
+            _, max_val = torch.max(prediction, dim=1)
+            # loss = self.criterion(prediction, target) * self.m_factor
             loss = self.criterion(prediction, target)
+            # new_distance = torch.mean(abs(max_val - target).float()).requires_grad_(True)
+            new_distance = l1_loss(max_val.float(), target.float()).requires_grad_(True)
+            # loss += distance * (1 - self.m_factor)
+            distance += new_distance
+            # loss = new_distance
             total_loss += loss.item()
             count_losses += 1
-            _, max_val = torch.max(prediction, dim=1)
             correct += torch.sum(max_val == target).item()
-
             count_all += len(input_x)
-            loss.backward()
+            loss.backward(retain_graph=True)
             optimizer.step()
+
+        print(f"Train Avg distance {distance / len(self.train_loader)}")
+        sched.step()
 
         acc = correct / count_all
         return acc
@@ -132,6 +194,9 @@ class ratingPredictor(nn.Module):
         total_loss = 0
         count_losses, count_all = 0, 0
         all_outputs = None
+        distance = 0
+        l1_loss = nn.L1Loss()
+
         for input_x, target in self.test_loader:
             prediction = self.predict(input_x)
             loss = self.criterion(prediction, target)
@@ -139,16 +204,16 @@ class ratingPredictor(nn.Module):
             count_losses += 1
             _, max_val = torch.max(prediction, dim=1)
             correct += torch.sum(max_val == target).item()
-
+            # distance += torch.mean(abs(max_val - target).float())
+            distance += l1_loss(max_val.float(), target.float()).requires_grad_(True)
             count_all += len(input_x)
 
         acc = correct / count_all
-        # print(f"Test Acc: {acc} Loss : {total_loss / count_losses}")
-
+        print(f"Test Avg distance {distance / len(self.test_loader)}")
         if not self.rating_df_unlabeld is None:
+            all_outputs = None
             unlabeld = data_utils.TensorDataset(self.rating_df_unlabeld, torch.zeros(len(self.rating_df_unlabeld)))
             unlabeld_loader = data_utils.DataLoader(unlabeld, batch_size=50)
-
             for input_x, _ in unlabeld_loader:
                 prediction = self.predict(input_x)
                 if all_outputs is None:
@@ -158,45 +223,84 @@ class ratingPredictor(nn.Module):
 
         return acc, all_outputs
 
-    def train(self, optimizer, count=0, max_count=25):
+
+    def add_pseudo_labels(self, pseudo_labels):
+        if self.rating_df_unlabeld is None:
+            raise Exception("do unlabeld data!")
+        n = 10
+        actuall_size = min(n, len(self.rating_df_unlabeld))
+        self.rating_df_train = torch.cat([self.rating_df_train, self.rating_df_unlabeld[-actuall_size:]])
+        user_ratings = pseudo_labels[-actuall_size:]
+        user_ratings = torch.tensor(user_ratings).long().cuda()
+        self.ratings_col_train = torch.cat([self.ratings_col_train, user_ratings])
+        print(user_ratings)
+        print(self.unlabeld_strs[-actuall_size:])
+        input("check diff")
+        self.rating_df_unlabeld = self.rating_df_unlabeld[:-actuall_size]
+        self.unlabeld_strs = self.unlabeld_strs[:-actuall_size]
+
+        # self.unlabeld_events = self.unlabeld_events[actuall_size:]
+
+        train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
+        self.train_loader = data_utils.DataLoader(train, batch_size=40)
+        # self.unlabeld_strs = list(self.unlabeld_strs)
+
+
+    def train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=100):
+        torch.allow_unreachable=True
         acc, all_outs = self.test_single_epoch()
         trial_count = 10
         acc = 0
         total_count = 0
+        weights = None
         while trial_count > 0:
+            new_lr = optimizer.param_groups[0]['lr']
+            if new_lr != self.lr:
+                print(new_lr)
+                self.lr = new_lr
+                # input("Changed!")
             total_count += 1
-            self.train_single_epoch(optimizer)
+            self.train_single_epoch(optimizer, sched)
             new_acc, all_outs = self.test_single_epoch()
-            if total_count % 5 == 0:
+            if total_count % 20 == 0:
                 print(new_acc)
             if new_acc <= acc:
                 trial_count -= 1
             else:
                 trial_count = 10
                 acc = new_acc
-            if total_count >= 20:
+            if total_count >= max_total_count:
                 trial_count = 0
 
         if not self.rating_df_unlabeld is None:
-            pmax, _ = torch.max(all_outs, dim=1)
+            pmax, pmax_indexes = torch.max(all_outs, dim=1)
             pmax = pmax.to("cpu:0")
+            weights = torch.tensor([(1 / (val * 2) + 1.5) for val in pmax])
+            pmax_indexes = pmax_indexes.to("cpu:0")
             pidx = torch.argsort(pmax)
+            pmax_ordered = pmax[pidx]
+            pmax_indexes = pmax_indexes[pidx]
+            weights = weights[pidx]
             self.rating_df_unlabeld = self.rating_df_unlabeld[pidx]
+
             colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
             pidx = pidx.detach().numpy()
             pmax = pmax.detach().numpy()
-            # self.unlabeld_strs = self.unlabeld_strs[pidx]
-            self.unlabeld_strs = np.array(self.unlabeld_strs)[pidx.astype(int)]
+            self.unlabeld_strs = np.array(self.unlabeld_strs)[pidx.astype(int)].tolist()
 
-            plt.plot(pmax[pidx], color = colors[int(count//5)])
-            plt.legend([str(i) for i in range(0, count + 1, 5)], loc ="lower right")
-            plt.savefig(f"look.pdf")
-            plt.show()
-            self.label_manually(3)
+            # if count % 5 == 0:
+            #     plt.plot(pmax[pidx], color = colors[int(count/5)])
+            #     plt.legend([str(i) for i in range(0, count +1, 5)], loc ="lower right")
+            #     plt.savefig(f"look.pdf")
+            #     plt.show()
+            # if new_acc > 0.55:
+            #     self.add_pseudo_labels(pmax_indexes)
 
 
         if count < max_count:
-            self.train(optimizer, count=count+1, max_count=max_count)
+            self.label_manually(n=n, weights=weights)
+            # self.m_factor /= 1.5
+            self.train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
 
 def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):
     if rating_flag:
@@ -282,10 +386,13 @@ def model_based_rating(model, events, all_conds, str_pattern, actions):
                 predict_pattern = to_add
             else:
                 predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
+
+            # self.rating_df_unlabeld = torch.tensor(data)
         rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events))
         # print(rating)
 
         # exit()
     except Exception as e:
         raise e
+    rating += 1
     return rating, rating

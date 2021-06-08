@@ -50,8 +50,7 @@ from sklearn.neighbors import KNeighborsClassifier as KNN
 import wandb
 from bayes_opt import BayesianOptimization
 import json
-
-
+from torch.optim.lr_scheduler import StepLR
 
 GRAPH_VALUE = 50
 GAMMA = 0.99
@@ -233,7 +232,7 @@ class ruleMiningClass(nn.Module):
 
         self.list_of_dfs = []
         df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
-        df.rating = df.rating.apply(lambda x : round(float(x) + 0.5))
+        df.rating = df.rating.apply(lambda x : round(float(x) + 0.2))
         # print(os.path.exists(f"Processed_knn/{self.pattern_path}"))
         if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
             print("Creating Knn!")
@@ -290,9 +289,14 @@ class ruleMiningClass(nn.Module):
         self.knn_avg = df.rating.mean()
 
         test_pred = ratingPredictor(df_new, df["rating"])
-        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-5)
-        test_pred.train(self.pred_optim, count=0, max_count=9)
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3)
+        self.pred_sched = StepLR(self.pred_optim, step_size=100, gamma=0.5)
+        test_pred.train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=50)
+        print(len(test_pred.ratings_col_train))
+        # exit()
         self.pred_pattern = test_pred
+        self.pred_pattern.rating_df_unlabeld = None
+        self.pred_pattern.unlabeld_strs = []
         return knn
 
     def _create_data(self, data_path):
@@ -583,7 +587,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
-    run_name = f"StarPilot Exp!"
+    run_name = f"StarPilot Exp!,  widow_size_{str(model.window_size)}"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -787,8 +791,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
                                 content = f.read()
                                 reward = int(content.count("\n") / (len(actions) + 1))
-                                if reward > model.max_fine_app:
-                                    reward = -1
+                                if reward >= model.max_fine_app:
+                                    reward = 2 * model.max_fine_app - reward
 
                                 # else:
                                     # reward *= (1 + (len(events) - 1)/5)
@@ -862,67 +866,68 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             index_max + 1,
                         )
                     )
-                if model.count > 15:
+                if model.count > 30:
                     print("\n\n\n---- Stopping early because of low log ----\n\n\n")
                     model.count = 0
                     for g in model.optimizer.param_groups:
                         g['lr'] *= 0.5
                     break
-            #
-            #
-            # rating_groups = [
-            #     np.mean(rating_plot[t : t + GRAPH_VALUE])
-            #     for t in range(0, len(rating_plot), GRAPH_VALUE)
-            # ]
-            # max_ratings_group = [
-            #     np.mean(max_rating[t: t + GRAPH_VALUE])
-            #     for t in range(0, len(max_rating), GRAPH_VALUE)
-            # ]
-            # real_groups = [
-            #     np.mean(real[t : t + GRAPH_VALUE])
-            #     for t in range(0, len(real), GRAPH_VALUE)
-            # ]
-            # for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
-            #     wandb.log({"reward": rew, "rating": rat, "max rating": max_rat})
-            # fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
-            #
-            # ax1.set_xlabel("Episode")
-            # ax1.set_title("Reward vs number of episodes played")
-            # labels = [
-            #     "{}-{}".format(t, t + GRAPH_VALUE)
-            #     for t in range(0, len(real), GRAPH_VALUE)
-            # ]
-            # locations = [
-            #     t + int(GRAPH_VALUE / 2) for t in range(0, len(real), GRAPH_VALUE)
-            # ]
-            # plt.sca(ax1)
-            # plt.xticks(locations, labels)
-            #
-            # ax1.scatter(locations, real_groups, c="g")
-            # ax1.set_ylabel("Avg Matches per window")
-            #
-            # ax1.plot()
-            #
-            # locations = [
-            #     t + int(GRAPH_VALUE / 2) for t in range(0, len(rating_plot), GRAPH_VALUE)
-            # ]
-            # ax2.set_ylabel("Avg Rating per window")
-            # ax2.set_xlabel("Episode")
-            # ax2.set_title("Rating vs number of episodes played")
-            # plt.sca(ax2)
-            # plt.xticks(locations, labels)
-            #
-            # ax2.scatter(locations, rating_groups, c="g")
-            # ax2.scatter(locations, max_ratings_group, c="r")
-            # ax2.plot()
-            # str_split_factor = str(split_factor * 100) + "%"
-            # if not os.path.exists(f"Graphs/{str_split_factor}/"):
-            #     os.mkdir(f"Graphs/{str_split_factor}/")
-            # plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}_{model.window_size}.pdf")
-            # plt.show()
-            # factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
-            model.pred_pattern.train(model.pred_optim, count=0, max_count=3)
+
+            rating_groups = [
+                np.mean(rating_plot[t : t + GRAPH_VALUE])
+                for t in range(0, len(rating_plot), GRAPH_VALUE)
+            ]
+            max_ratings_group = [
+                np.mean(max_rating[t: t + GRAPH_VALUE])
+                for t in range(0, len(max_rating), GRAPH_VALUE)
+            ]
+            real_groups = [
+                np.mean(real[t : t + GRAPH_VALUE])
+                for t in range(0, len(real), GRAPH_VALUE)
+            ]
+            for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
+                wandb.log({"reward": rew, "rating": rat, "max rating": max_rat})
+            fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
+
+            ax1.set_xlabel("Episode")
+            ax1.set_title("Reward vs number of episodes played")
+            labels = [
+                "{}-{}".format(t, t + GRAPH_VALUE)
+                for t in range(0, len(real), GRAPH_VALUE)
+            ]
+            locations = [
+                t + int(GRAPH_VALUE / 2) for t in range(0, len(real), GRAPH_VALUE)
+            ]
+            plt.sca(ax1)
+            plt.xticks(locations, labels)
+
+            ax1.scatter(locations, real_groups, c="g")
+            ax1.set_ylabel("Avg Matches per window")
+
+            ax1.plot()
+
+            locations = [
+                t + int(GRAPH_VALUE / 2) for t in range(0, len(rating_plot), GRAPH_VALUE)
+            ]
+            ax2.set_ylabel("Avg Rating per window")
+            ax2.set_xlabel("Episode")
+            ax2.set_title("Rating vs number of episodes played")
+            plt.sca(ax2)
+            plt.xticks(locations, labels)
+
+            ax2.scatter(locations, rating_groups, c="g")
+            ax2.scatter(locations, max_ratings_group, c="r")
+            ax2.plot()
+            str_split_factor = str(split_factor * 100) + "%"
+            if not os.path.exists(f"Graphs/{str_split_factor}/"):
+                os.mkdir(f"Graphs/{str_split_factor}/")
+            plt.savefig(f"Graphs/{str_split_factor}/{str(len(real))}_{model.window_size}.pdf")
+            plt.show()
+            factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
+
+            if epoch < 2:
+                model.pred_pattern.train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=40, n=3)
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1228,15 +1233,15 @@ def main(parser):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
-    parser.add_argument('--bs', default=200, type=int, help='batch size')
+    parser.add_argument('--bs', default=400, type=int, help='batch size')
     parser.add_argument('--epochs', default=7, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=1e-6, type=float, help='starting learning rate')
+    parser.add_argument('--lr', default=1e-7, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
-    parser.add_argument('--max_fine_app', default=85, type=int, help='max appearance of pattnern in a single window')
-    parser.add_argument('--pattern_max_time', default=30, type=int, help='maximum time for pattern (seconds)')
-    parser.add_argument('--window_size', default=375, type=int, help='max size of input window')
+    parser.add_argument('--max_fine_app', default=40, type=int, help='max appearance of pattnern in a single window')
+    parser.add_argument('--pattern_max_time', default=50, type=int, help='maximum time for pattern (seconds)')
+    parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41,type=int, help='number of unique events in data')
     parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
     parser.add_argument('--events_path', default='Football/events', help='path to list of events')

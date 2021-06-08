@@ -614,6 +614,6 @@ def bayesian_function(**values):
 
     with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
         reward = int(f.read().count("\n") / (len(actions) + 1))
-        if reward > max_fine:
-            reward = 1
+        if reward >= max_fine:
+            reward = 2 * max_fine - reward
         return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0
