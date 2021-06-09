@@ -9,7 +9,7 @@ import matplotlib
 import random
 matplotlib.use('pdf')
 import matplotlib.pyplot as plt
-
+import copy
 
 PATTERN_LEN = 40
 MAX_RATING = 10
@@ -31,11 +31,6 @@ class ratingPredictor(nn.Module):
         ratings_col = ratings_col.apply(lambda x: min(x, 5))
         self.rating_df_train = rating_df[:3500]
         self.ratings_col_train = ratings_col[:3500]
-        # ax = self.ratings_col_train.plot.hist(bins=6, alpha=0.5)
-        # plt.savefig(f"look.pdf")
-        # plt.show()
-        # input("continue")
-        # plt.clf()
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
@@ -80,6 +75,7 @@ class ratingPredictor(nn.Module):
         self.test_loader = data_utils.DataLoader(test, batch_size=512)
         self.softmax = nn.Softmax()
         self.lr = 5e-3
+        # self._create_data_aug(self.rating_df_train[0])
 
     def label_manually(self, n, weights):
         def del_elements(containter, indexes):
@@ -302,6 +298,15 @@ class ratingPredictor(nn.Module):
             self.label_manually(n=n, weights=weights)
             # self.m_factor /= 1.5
             self.train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
+
+
+    def _create_data_aug(self, data_inst):
+        copy_data = data_inst.clone()
+        indexes = random.choices(range(0, len(copy_data)), k=10)
+        for idx in indexes:
+            copy_data[idx] = random.choice(copy_data)
+        return copy_data
+
 
 def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):
     if rating_flag:
