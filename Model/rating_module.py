@@ -28,9 +28,16 @@ class ratingPredictor(nn.Module):
         ratings_col,
     ):
         super().__init__()
-        ratings_col = ratings_col.apply(lambda x: min(x, 5))
+        # ratings_col = ratings_col.apply(lambda x: min(x, 9))
         self.rating_df_train = rating_df[:3500]
         self.ratings_col_train = ratings_col[:3500]
+
+
+        ax = self.ratings_col_train.plot.hist(bins=6, alpha=0.5)
+        # plt.savefig(f"look.pdf")
+        # plt.show()
+        # input("continue")
+        # plt.clf()
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
@@ -45,7 +52,7 @@ class ratingPredictor(nn.Module):
         self.rating_df_unlabeld = rating_df[3500:4000]
         self.unlabeld_strs = ratings_col[3500:4000]
 
-        self.dropout = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.1)
 
         # ax = self.unlabeld_strs.plot.hist(bins=6, alpha=0.5)
         # plt.savefig(f"look.pdf")
@@ -59,12 +66,15 @@ class ratingPredictor(nn.Module):
         # self.rating_df_unlabeld = None
         # self.unlabeld_strs = []
         self.unlabeld_events = []
-        self.linear_layer = nn.Linear(PATTERN_LEN, PATTERN_LEN // 2).cuda()
-        self.linear_layer2 = nn.Linear(PATTERN_LEN // 2, MAX_RATING).cuda()
+        self.hidden_size1 = 25
+        self.hidden_size2 = 15
+        self.linear_layer = nn.Linear(PATTERN_LEN, self.hidden_size1).cuda()
+        self.linear_layer2 = nn.Linear(self.hidden_size1, self.hidden_size2).cuda()
+        self.linear_layer3 = nn.Linear(self.hidden_size2, MAX_RATING).cuda()
         weights = torch.ones(MAX_RATING)
-        weights[0] = 0.2
+        # weights[0] = 0.2
         # weights[1] = 0.4
-        weights[-1] = 2
+        # weights[-1] = 2
         # weights[-2] = 2.5
         # weights[-3] = 1.5
         weights = weights.cuda()
@@ -73,8 +83,12 @@ class ratingPredictor(nn.Module):
         self.train_loader = data_utils.DataLoader(train, batch_size=64)
         test = data_utils.TensorDataset(self.rating_df_test, self.ratings_col_test)
         self.test_loader = data_utils.DataLoader(test, batch_size=512)
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=1)
         self.lr = 5e-3
+        self.extra_ratings = [[] for _ in range(0, MAX_RATING)]
+
+        self._fix_data_balance(first=True)
+        # input("Sdssf")
         # self._create_data_aug(self.rating_df_train[0])
 
     def label_manually(self, n, weights):
@@ -126,31 +140,37 @@ class ratingPredictor(nn.Module):
         # self.unlabeld_strs = list(self.unlabeld_strs)
 
     def forward(self, data):
-        data = torch.tensor(data).cuda()
+        # data = torch.tensor(data).cuda()
+        data = data.cuda()
         data = self.linear_layer(data)
         data = self.dropout(data)
         data = F.relu(data).cuda()
         data = self.linear_layer2(data).cuda()
+        data = F.leaky_relu(data).cuda()
+        data = self.linear_layer3(data).cuda()
         return data
 
     def predict(self, data):
         forward_pass = self.forward(data)
+        # print(forward_pass.shape)
+        # input("softmax shit")
         prediction = self.softmax(forward_pass)
         return prediction
 
-    def get_prediction(self, data, data_str, events):
-        if self.rating_df_unlabeld is None:
-            self.rating_df_unlabeld = torch.tensor(data)
-        else:
-            self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, torch.tensor(data)])
-        try:
-            self.unlabeld_strs.append(data_str)
-        except Exception as e:
-            print(type(self.unlabeld_strs))
-            print(self.unlabeld_strs)
-            raise e
+    def get_prediction(self, data, data_str, events, balance_flag=False):
+        if not balance_flag:
+            if self.rating_df_unlabeld is None:
+                self.rating_df_unlabeld = torch.tensor(data)
+            else:
+                self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach().requires_grad_(True)
+            try:
+                self.unlabeld_strs.append(data_str)
+            except Exception as e:
+                print(type(self.unlabeld_strs))
+                print(self.unlabeld_strs)
+                raise e
 
-        self.unlabeld_events.append(events)
+            self.unlabeld_events.append(events)
         res = self.predict(data)
         _, res = torch.max(res, dim=1)
         return res.item() + 1
@@ -161,6 +181,7 @@ class ratingPredictor(nn.Module):
         count_losses, count_all = 0, 0
         distance = 0
         l1_loss = nn.L1Loss()
+        self.train()
         for input_x, target in self.train_loader:
             optimizer.zero_grad()
             prediction = self.predict(input_x)
@@ -192,7 +213,7 @@ class ratingPredictor(nn.Module):
         all_outputs = None
         distance = 0
         l1_loss = nn.L1Loss()
-
+        self.eval()
         for input_x, target in self.test_loader:
             prediction = self.predict(input_x)
             loss = self.criterion(prediction, target)
@@ -243,11 +264,12 @@ class ratingPredictor(nn.Module):
         # self.unlabeld_strs = list(self.unlabeld_strs)
 
 
-    def train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=100):
+    def _train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=30):
         torch.allow_unreachable=True
         total_count = 0
+        trial_count_reset = 25
         acc, all_outs = self.test_single_epoch(total_count)
-        trial_count = 10
+        trial_count = trial_count_reset
         acc = 0
         weights = None
         while trial_count > 0:
@@ -263,9 +285,10 @@ class ratingPredictor(nn.Module):
             if new_acc <= acc:
                 trial_count -= 1
             else:
-                trial_count = 10
+                trial_count = trial_count_reset
                 acc = new_acc
             if total_count >= max_total_count:
+                print("End!")
                 trial_count = 0
             total_count += 1
 
@@ -296,16 +319,94 @@ class ratingPredictor(nn.Module):
 
         if count < max_count:
             self.label_manually(n=n, weights=weights)
-            # self.m_factor /= 1.5
-            self.train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
+            if count % 2 == 0:
+                self._fix_data_balance()
+            self.m_factor /= 1.1
+            self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
 
 
     def _create_data_aug(self, data_inst):
         copy_data = data_inst.clone()
-        indexes = random.choices(range(0, len(copy_data)), k=10)
+        indexes = random.choices(range(0, len(copy_data)), k=int(PATTERN_LEN / 3))
         for idx in indexes:
             copy_data[idx] = random.choice(copy_data)
         return copy_data
+
+
+    def _fix_data_balance(self, first=False):
+
+        def _over_sampeling(flatten, split_samples, max_add_extra=50):
+            lens_array = np.array([len(i) for i in split_samples])
+            print(lens_array)
+            mean_len = lens_array.mean()
+            for rating, num_exmps in enumerate(lens_array):
+                if num_exmps < mean_len * 1.5:
+                    if len(self.extra_ratings[rating]) != 0:
+                        extras = self.extra_ratings[rating][:max_add_extra]
+                        extras = torch.stack(extras)
+                        split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
+                    else:
+                        augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
+                        augs = torch.stack(augs)
+                        if not first:
+                            labels = torch.ones(len(split_samples[rating])) * rating
+                            data = split_samples[rating]
+                            prediction = self.predict(data)
+                            _, max_val = torch.max(prediction, dim=1)
+                            max_val = max_val.cpu()
+                            falses = max_val != labels
+                            augs = augs[falses][:max_add_extra]
+                        else:
+                            augs = random.choices(augs, k=min(len(augs), max_add_extra))
+                        split_samples[rating] = torch.stack(flatten([split_samples[rating], augs]))
+                # elif not first and num_exmps < mean_len * 2:
+            return split_samples
+
+        def _under_sampeling(split_samples, max_remove=150):
+            lens_array = np.array([len(i) for i in split_samples])
+            print(lens_array)
+
+            mean_len = lens_array.mean()
+            for rating, num_exmps in enumerate(lens_array):
+                if num_exmps > mean_len * 2:
+                    if not first:
+                        labels = torch.ones(len(split_samples[rating])) * rating
+                        data = split_samples[rating]
+                        prediction = self.predict(data)
+                        certain, max_val = torch.max(prediction, dim=1)
+                        max_val = max_val.cpu()
+                        certain = certain.cpu()
+                        to_remove_mask = (max_val == labels) & (certain > 0.55)
+                        index = -1
+                        while sum(to_remove_mask) > max_remove:
+                            to_remove_mask[index] = False
+                            index -= 1
+                        self.extra_ratings[rating].extend(split_samples[rating][to_remove_mask])
+                        split_samples[rating] = split_samples[rating][~to_remove_mask]
+                    else:
+                        self.extra_ratings[rating].extend(split_samples[rating][:max_remove])
+                        split_samples[rating] = split_samples[rating][max_remove:]
+
+            return split_samples
+
+
+        flatten = lambda list_list: [item for sublist in list_list for item in sublist]
+        split_samples = [self.rating_df_train[self.ratings_col_train == i] for i in range(0, MAX_RATING)]
+        split_samples = _over_sampeling(flatten, split_samples)
+        split_samples = _under_sampeling(split_samples)
+        lens_array = np.array([len(i) for i in split_samples])
+        print(lens_array)
+
+        self.ratings_col_train = torch.stack(flatten([[torch.tensor(rating)] * len(samples) for rating, samples in enumerate(split_samples)])).cuda()
+        split_samples = flatten(split_samples)
+
+        self.rating_df_train = torch.stack(split_samples).cuda()
+
+
+
+        self.rating_df_train = self.rating_df_train.cuda()
+        train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
+        self.train_loader = data_utils.DataLoader(train, batch_size=64, shuffle=True)
 
 
 def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):

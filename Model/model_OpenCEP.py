@@ -4,6 +4,9 @@ import random
 import torch.nn as nn
 import os
 from copy import deepcopy
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+# warnings.filterwarnings("ignore", category=UserWarning)
 
 from Model.utils import (
     OpenCEP_pattern,
@@ -290,8 +293,8 @@ class ruleMiningClass(nn.Module):
 
         test_pred = ratingPredictor(df_new, df["rating"])
         self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3)
-        self.pred_sched = StepLR(self.pred_optim, step_size=100, gamma=0.5)
-        test_pred.train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=50)
+        self.pred_sched = StepLR(self.pred_optim, step_size=250, gamma=0.5)
+        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=40, n=25)
         print(len(test_pred.ratings_col_train))
         # exit()
         self.pred_pattern = test_pred
@@ -929,7 +932,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
             if epoch < 2:
-                model.pred_pattern.train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=40, n=3)
+                model.pred_pattern._train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=40, n=3)
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
