@@ -144,16 +144,14 @@ class ratingPredictor(nn.Module):
         data = data.cuda()
         data = self.linear_layer(data)
         data = self.dropout(data)
-        data = F.relu(data).cuda()
+        data = F.relu(data, inplace=False).cuda()
         data = self.linear_layer2(data).cuda()
-        data = F.leaky_relu(data).cuda()
+        data = F.leaky_relu(data, inplace=False).cuda()
         data = self.linear_layer3(data).cuda()
         return data
 
     def predict(self, data):
         forward_pass = self.forward(data)
-        # print(forward_pass.shape)
-        # input("softmax shit")
         prediction = self.softmax(forward_pass)
         return prediction
 
@@ -162,7 +160,7 @@ class ratingPredictor(nn.Module):
             if self.rating_df_unlabeld is None:
                 self.rating_df_unlabeld = torch.tensor(data)
             else:
-                self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach().requires_grad_(True)
+                self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach()
             try:
                 self.unlabeld_strs.append(data_str)
             except Exception as e:
@@ -197,13 +195,17 @@ class ratingPredictor(nn.Module):
             count_losses += 1
             correct += torch.sum(max_val == target).item()
             count_all += len(input_x)
-            loss.backward(retain_graph=True)
+            loss = loss.cuda()
+            loss.backward()
             optimizer.step()
-        if total_count % 10 == 0:
-            print(f"Train Avg distance {distance / len(self.train_loader)}")
+
         sched.step()
 
         acc = correct / count_all
+        if total_count % 5 == 0:
+            # print(f"Train Avg distance {distance / len(self.train_loader)}")
+            print(f" Train acc = {acc}")
+
         return acc
 
     def test_single_epoch(self, total_count):
@@ -226,8 +228,10 @@ class ratingPredictor(nn.Module):
             count_all += len(input_x)
 
         acc = correct / count_all
-        if total_count % 10 == 0:
-            print(f"Test Avg distance {distance / len(self.test_loader)}")
+        # if total_count % 5 == 0:
+        #     print(f"Test Avg distance {distance / len(self.test_loader)}")
+        #     print(f" Test acc = {acc}")
+
         if not self.rating_df_unlabeld is None:
             all_outputs = None
             unlabeld = data_utils.TensorDataset(self.rating_df_unlabeld, torch.zeros(len(self.rating_df_unlabeld)))
@@ -272,16 +276,20 @@ class ratingPredictor(nn.Module):
         trial_count = trial_count_reset
         acc = 0
         weights = None
+        count_err = 0
         while trial_count > 0:
             new_lr = optimizer.param_groups[0]['lr']
             if new_lr != self.lr:
                 print(new_lr)
                 self.lr = new_lr
                 # input("Changed!")
-            self.train_single_epoch(optimizer, sched, total_count)
+            try:
+                self.train_single_epoch(optimizer, sched, total_count)
+            except Exception as e:
+                print(e)
+                count_err += 1
+                print(f"num errors {count_err}")
             new_acc, all_outs = self.test_single_epoch(total_count)
-            if total_count % 10 == 0:
-                print(new_acc)
             if new_acc <= acc:
                 trial_count -= 1
             else:
@@ -334,41 +342,45 @@ class ratingPredictor(nn.Module):
 
 
     def _fix_data_balance(self, first=False):
-
         def _over_sampeling(flatten, split_samples, max_add_extra=50):
             lens_array = np.array([len(i) for i in split_samples])
+            if first:
+                return split_samples
             print(lens_array)
             mean_len = lens_array.mean()
             for rating, num_exmps in enumerate(lens_array):
-                if num_exmps < mean_len * 1.5:
-                    if len(self.extra_ratings[rating]) != 0:
-                        extras = self.extra_ratings[rating][:max_add_extra]
-                        extras = torch.stack(extras)
-                        split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
+                # if num_exmps < mean_len * 1.5:
+                if len(self.extra_ratings[rating]) != 0:
+                    extras = self.extra_ratings[rating][:max_add_extra]
+                    extras = torch.stack(extras)
+                    split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
+                else:
+                    augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
+                    augs = torch.stack(augs)
+                    labels = torch.ones(len(split_samples[rating])) * rating
+                    data = split_samples[rating]
+                    prediction = self.predict(data)
+                    _, max_val = torch.max(prediction, dim=1)
+                    max_val = max_val.cpu()
+                    falses = max_val != labels
+                    add_augs_false = augs[falses][:max_add_extra]
+                    add_augs_others = random.choices(augs, k=max_add_extra-len(add_augs_false))
+                    if len(add_augs_false) == 0:
+                        augs = add_augs_others
                     else:
-                        augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
+                        augs = flatten([add_augs_false, add_augs_others])
                         augs = torch.stack(augs)
-                        if not first:
-                            labels = torch.ones(len(split_samples[rating])) * rating
-                            data = split_samples[rating]
-                            prediction = self.predict(data)
-                            _, max_val = torch.max(prediction, dim=1)
-                            max_val = max_val.cpu()
-                            falses = max_val != labels
-                            augs = augs[falses][:max_add_extra]
-                        else:
-                            augs = random.choices(augs, k=min(len(augs), max_add_extra))
-                        split_samples[rating] = torch.stack(flatten([split_samples[rating], augs]))
-                # elif not first and num_exmps < mean_len * 2:
+                    split_samples[rating] = torch.stack(flatten([split_samples[rating], augs]))
             return split_samples
 
-        def _under_sampeling(split_samples, max_remove=150):
+        def _under_sampeling(split_samples, max_remove=20):
             lens_array = np.array([len(i) for i in split_samples])
             print(lens_array)
-
+            if first:
+                max_remove = max(lens_array) - min(lens_array)
             mean_len = lens_array.mean()
             for rating, num_exmps in enumerate(lens_array):
-                if num_exmps > mean_len * 2:
+                if num_exmps > min(lens_array) + 10:
                     if not first:
                         labels = torch.ones(len(split_samples[rating])) * rating
                         data = split_samples[rating]
@@ -378,12 +390,13 @@ class ratingPredictor(nn.Module):
                         certain = certain.cpu()
                         to_remove_mask = (max_val == labels) & (certain > 0.55)
                         index = -1
-                        while sum(to_remove_mask) > max_remove:
+                        while sum(to_remove_mask) > max(0, num_exmps - min(lens_array)) :
                             to_remove_mask[index] = False
                             index -= 1
                         self.extra_ratings[rating].extend(split_samples[rating][to_remove_mask])
                         split_samples[rating] = split_samples[rating][~to_remove_mask]
                     else:
+                        max_remove = max(0, num_exmps - min(lens_array))
                         self.extra_ratings[rating].extend(split_samples[rating][:max_remove])
                         split_samples[rating] = split_samples[rating][max_remove:]
 
@@ -480,26 +493,27 @@ def model_based_rating(model, events, all_conds, str_pattern, actions):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     rating = 0
     predict_pattern = None
-    try:
-        # for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
-        for arr_index, arr in enumerate([events, flatten(actions)]):
-            arr = arr.copy()
-            temp_pd = model.list_of_dfs[arr_index].copy()
-            arr += ["Nan"] * (len(temp_pd) - len(arr))
-            arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
-            to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
+    with torch.no_grad():
+        try:
+            # for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
+            for arr_index, arr in enumerate([events, flatten(actions)]):
+                arr = arr.copy()
+                temp_pd = model.list_of_dfs[arr_index].copy()
+                arr += ["Nan"] * (len(temp_pd) - len(arr))
+                arr = [temp_pd[array_index][str(val)] for array_index, val in enumerate(arr)]
+                to_add = pd.DataFrame(np.array(arr).reshape(-1, len(arr)))
 
-            if predict_pattern is None:
-                predict_pattern = to_add
-            else:
-                predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
+                if predict_pattern is None:
+                    predict_pattern = to_add
+                else:
+                    predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
-            # self.rating_df_unlabeld = torch.tensor(data)
-        rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events))
-        # print(rating)
+                # self.rating_df_unlabeld = torch.tensor(data)
+            rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events))
+            # print(rating)
 
-        # exit()
-    except Exception as e:
-        raise e
+            # exit()
+        except Exception as e:
+            raise e
     rating += 1
     return rating, rating
