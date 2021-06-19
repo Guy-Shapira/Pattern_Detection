@@ -292,9 +292,9 @@ class ruleMiningClass(nn.Module):
         self.knn_avg = df.rating.mean()
 
         test_pred = ratingPredictor(df_new, df["rating"])
-        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3)
-        self.pred_sched = StepLR(self.pred_optim, step_size=250, gamma=0.5)
-        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=40, n=25)
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3, weight_decay=0.01)
+        self.pred_sched = StepLR(self.pred_optim, step_size=200, gamma=0.3)
+        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=1, max_total_count=50, n=0)
         print(len(test_pred.ratings_col_train))
         # exit()
         self.pred_pattern = test_pred
@@ -795,6 +795,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
                             with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
                                 content = f.read()
+                                input("Data/Matches/{}Matches.txt".format(index))
                                 reward = int(content.count("\n") / (len(actions) + 1))
                                 if reward >= model.max_fine_app:
                                     reward = 2 * model.max_fine_app - reward
