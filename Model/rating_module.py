@@ -56,7 +56,7 @@ class ratingPredictor(nn.Module):
         self.rating_df_unlabeld = rating_df[SPLIT_1:SPLIT_2]
         self.unlabeld_strs = ratings_col[SPLIT_1:SPLIT_2]
 
-        self.dropout = nn.Dropout(p=0.1)
+        self.dropout = nn.Dropout(p=0.2)
 
         # ax = self.unlabeld_strs.plot.hist(bins=6, alpha=0.5)
         # plt.savefig(f"look.pdf")
@@ -78,10 +78,13 @@ class ratingPredictor(nn.Module):
         self.linear_layer3 = nn.Linear(self.hidden_size2, self.hidden_size3).cuda()
         self.linear_layer4 = nn.Linear(self.hidden_size3, MAX_RATING).cuda()
         weights = torch.ones(MAX_RATING)
-        # weights[0] = 0.2
+
+        weights[0] = 0.5
+        weights[1] = 0.5
+        weights[2] = 0.5
         weights[4] = 5
-        # weights[1] = 0.4
-        # weights[-1] = 10
+
+        weights[-1] = 10
         # weights[-2] = 15
         # weights[-3] = 10
         # weights[-4] = 5
@@ -229,12 +232,12 @@ class ratingPredictor(nn.Module):
         acc = correct / count_all
         # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
         # acc = sum(mistake_histogram) / sum(lens_array)
-        if total_count % 25 == 0:
-            mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-            acc = sum(mistake_histogram) / sum(lens_array)
-            print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
-            print(f"Mistakes: {mistake_histogram}")
-            print(f"Mistakes %: {mistake_acc}")
+        # if total_count % 25 == 0:
+        #     mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+        #     acc = sum(mistake_histogram) / sum(lens_array)
+        #     print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
+        #     print(f"Mistakes: {mistake_histogram}")
+        #     print(f"Mistakes %: {mistake_acc}")
         #     # print(f"Train Avg distance {distance / len(self.train_loader)}")
         #     print(f" Train acc = {acc}")
 
@@ -451,10 +454,13 @@ class ratingPredictor(nn.Module):
                         self.extra_ratings[rating].extend(split_samples[rating][to_remove_mask])
                         split_samples[rating] = split_samples[rating][~to_remove_mask]
                     else:
-                        max_keep = max(lens_array) - min(lens_array)
-                        max_keep = min(300, int(max_keep / 5))
-                        self.extra_ratings[rating].extend(split_samples[rating][:max_keep])
-                        split_samples[rating] = split_samples[rating][max_keep:]
+                        if num_exmps < np.mean(lens_array):
+                            continue
+                        else:
+                            max_keep = max(lens_array) - min(lens_array)
+                            max_keep = min(300, int(max_keep / 5))
+                            self.extra_ratings[rating].extend(split_samples[rating][:max_keep])
+                            split_samples[rating] = split_samples[rating][max_keep:]
 
             return split_samples
 

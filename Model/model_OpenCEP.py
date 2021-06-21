@@ -294,7 +294,7 @@ class ruleMiningClass(nn.Module):
         test_pred = ratingPredictor(df_new, df["rating"])
         self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3, weight_decay=0.01)
         self.pred_sched = StepLR(self.pred_optim, step_size=200, gamma=0.3)
-        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=1, max_total_count=50, n=0)
+        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=60, n=5)
         print(len(test_pred.ratings_col_train))
         # exit()
         self.pred_pattern = test_pred
@@ -590,7 +590,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
-    run_name = f"StarPilot Exp!,  widow_size_{str(model.window_size)}, max_rating=10"
+    run_name = f"StarPilot Exp! fixed window"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -652,6 +652,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             path = os.path.join(absolutePath, "Model", "training")
             data_len = len(os.listdir(path))
             for index in range(epoch, data_len, data_len // bs):
+                set_data = None
                 if total_count >= bs:
                     total_count = 0
                     turn_flag = 1 - turn_flag
@@ -692,6 +693,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 if total_count % 25 == 0:
                     training_factor /= 1.2
                 while not is_done:
+                    if not set_data is None:
+                        data = set_data.clone().detach().requires_grad_(True)
+                        set_data = None
                     data = data.cuda()
                     mask_orig = mask.clone()
                     action, log_prob, value_reward, value_rating, entropy = model.get_event(
@@ -795,13 +799,40 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
                             with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
                                 content = f.read()
-                                input("Data/Matches/{}Matches.txt".format(index))
                                 reward = int(content.count("\n") / (len(actions) + 1))
+                                global EMBDEDDING_TOTAL_SIZE
+                                if len(actions) == 1 and reward != 0:
+                                    try:
+                                        first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
+                                        with open(file, "r") as data_file:
+                                            content = data_file.read()
+                                        lines = content.split("\n")
+                                        row_idx = 0
+                                        for num, line in enumerate(lines):
+                                            # print(f"ts {first_ts}, line: {line}")
+                                            if line.startswith(first_ts):
+                                                row_idx = num
+                                                break
+                                        # input("next")
+                                        chunk_size = EMBDEDDING_TOTAL_SIZE * row_idx
+                                        # print(chunk_size)
+                                        # input("wait")
+                                        # data = data.detach()
+                                        # set_data = data.clone().detach().cuda()
+                                        set_data = torch.tensor([i for i in data])
+                                        set_data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
+                                        # data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
+                                        # print(chunk_size)
+                                        # print(set_data[:chunk_size])
+                                        # print(set_data)
+                                    except Exception as e:
+                                        print(e)
+                                        print(f"Reward : {reward}")
+                                        pass
+
                                 if reward >= model.max_fine_app:
                                     reward = 2 * model.max_fine_app - reward
 
-                                # else:
-                                    # reward *= (1 + (len(events) - 1)/5)
                                 real_rewards.append(reward)
                                 if reward == 0 and turn_flag:
                                     normalize_reward.append(-25)
@@ -851,7 +882,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 rating_plot.append(ratings[index_max])
                 mean_real.append(np.mean(real_rewards))
 
-                if in_round_count % 2 == 0:
+                # if in_round_count % 2 == 0:
+                if True:
                     sys.stdout.write(
                         "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
                             real_rewards[index_max],
