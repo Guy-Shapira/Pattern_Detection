@@ -37,6 +37,13 @@ from datetime import timedelta
 import csv
 import pickle
 import timeout_decorator
+import copy
+
+
+from Model.rating_module import (
+    model_based_rating,
+)
+
 
 currentPath = pathlib.Path(os.path.dirname(__file__))
 absolutePath = str(currentPath.parent)
@@ -422,7 +429,8 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
         curr_conds = conds[event_index]
         for (i, action) in enumerate(comps):
             if action != 'nop':
-                if action.startswith("v"):
+                if "v" in action:
+                    copy_action = copy.deepcopy(action)
                     action = action.split("v")[1]
                     if sum([i in action for i in ["+>", "->"]]):
                         if (event_index != len(events) - 1) and chr(ord("a") + comp_target[event_index][i]) != event_char and comp_target[event_index][i] < len(events):
@@ -618,3 +626,89 @@ def bayesian_function(**values):
         if reward >= max_fine:
             reward = 2 * max_fine - reward
         return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0
+
+
+
+def check_predictor(model):
+    cols  = ["x", "y", "vx", "vy"]
+    all_actions = [">", "<", "="]
+    all_actions = all_actions
+    all_actions.extend(["not" + i for i in all_actions])
+    value_less_actions = copy.deepcopy(all_actions)
+    all_actions.extend(["v" + i for i in all_actions])
+    match_max_size = 8
+    comp_targets = [i for i in range(0, match_max_size)] + ["value"]
+    patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
+    bullet_list = ["bullet" + str(i) for i in range(1,7)]
+    flyer_list = ["flyer" + str(i) for i in range(1,9)]
+    explosion_list = ["explosion" + str(i) for i in range(1,9)]
+
+    all_conds, all_comps = [], []
+    actions, comp_values = [], []
+    events = []
+
+    in_between = random.choice([1, 2, 3])
+    events = ["player"]
+    next_actions = random.choices(all_actions, k=len(cols))
+    actions.append(next_actions)
+    next_conds = random.choices(["and", "or"], k=len(cols))
+    all_conds.append(next_conds)
+    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+    comp_values.append(next_comp_vals)
+    next_targets = random.choices(comp_targets, k=len(cols))
+    all_comps.append(next_targets)
+    while in_between > 0:
+        in_between -= 1
+        new_bullets = list(set(bullet_list) - set(events))
+        event = random.choice(new_bullets)
+        events.append(event)
+        next_targets = random.choices(comp_targets, k=len(cols))
+        next_actions = random.choices(all_actions, k=len(cols))
+        actions.append(next_actions)
+        next_conds = random.choices(["and", "or"], k=len(cols))
+        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+
+        comp_values.append(next_comp_vals)
+        all_comps.append(next_targets)
+        all_conds.append(next_conds)
+
+    # end of pattern
+    end_events = random.choice([0, 1, 2])
+    while end_events > 0:
+        end_events -= 1
+        event = random.choice(flyer_list + ["finish", "player"] + explosion_list)
+        events.append(event)
+        next_targets = random.choices(comp_targets, k=len(cols))
+        next_actions = random.choices(all_actions, k=len(cols))
+        next_conds = random.choices(["and", "or"], k=len(cols))
+        actions.append(next_actions)
+
+        # next_comp_vals = ["value" if "v" in act else chr(ord("a") + random.choice(range(match_max_size))) + "." + cols[i] for i, act in enumerate(actions[-1])]
+        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+
+        comp_values.append(next_comp_vals)
+        all_comps.append(next_targets)
+        all_conds.append(next_conds)
+
+
+        # str_pattern = create_pattern_str(events, actions, comp_values, all_conds, cols, all_comps)
+        puberted_actions = copy.deepcopy(actions)
+        puberted_events = copy.deepcopy(events)
+
+    for i in range(len(events)):
+        str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], cols, all_comps[:i+1])
+        print(events[:i+1])
+        print(str_pattern)
+        rating, norm_rating = model_based_rating(model, events[:i+1], all_conds[:i+1], str_pattern, actions[:i+1])
+        print(rating)
+        if not (i == 0 or i == (len(events) - 1)):
+            puberted_events[i] = random.choice(explosion_list)
+            puberted_actions[i] = [act if "value" in act else random.choice(value_less_actions) for act in actions[i]]
+
+        str_pattern = create_pattern_str(puberted_events[:i+1], puberted_actions[:i+1], comp_values[:i+1], all_conds[:i+1], cols, all_comps[:i+1])
+        print(puberted_events[:i+1])
+        print(str_pattern)
+        rating, norm_rating = model_based_rating(model, puberted_events[:i+1], all_conds[:i+1], str_pattern, puberted_actions[:i+1])
+        print(rating)
+
+        print("---------")

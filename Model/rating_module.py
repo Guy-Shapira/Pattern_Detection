@@ -7,16 +7,18 @@ import torch.utils.data as data_utils
 import torch.nn.functional as F
 import matplotlib
 import random
-matplotlib.use('pdf')
 import matplotlib.pyplot as plt
 import copy
+import os
 
 PATTERN_LEN = 40
 MAX_RATING = 10
 random.seed(42)
+np.seterr('raise')
+SPLIT_1 = 39000
+SPLIT_2 = 40000
+SPLIT_3 = 41000
 
-SPLIT_1 = 10000
-SPLIT_2 = 25000
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -32,22 +34,17 @@ class ratingPredictor(nn.Module):
         ratings_col,
     ):
         super().__init__()
-        # ratings_col = ratings_col.apply(lambda x: min(x, 9))
+        ratings_col = ratings_col.apply(lambda x: min(x, 9))
         self.rating_df_train = rating_df[:SPLIT_1]
         self.ratings_col_train = ratings_col[:SPLIT_1]
 
-
         ax = self.ratings_col_train.plot.hist(bins=6, alpha=0.5)
-        # plt.savefig(f"look.pdf")
-        # plt.show()
-        # input("continue")
-        # plt.clf()
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
 
-        self.rating_df_test = rating_df[SPLIT_2:]
-        self.ratings_col_test = ratings_col[SPLIT_2:]
+        self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
+        self.ratings_col_test = ratings_col[SPLIT_2:SPLIT_3]
         self.m_factor = 0.9
 
         self.rating_df_test = df_to_tensor(self.rating_df_test)
@@ -56,19 +53,12 @@ class ratingPredictor(nn.Module):
         self.rating_df_unlabeld = rating_df[SPLIT_1:SPLIT_2]
         self.unlabeld_strs = ratings_col[SPLIT_1:SPLIT_2]
 
-        self.dropout = nn.Dropout(p=0.2)
+        self.dropout = nn.Dropout(p=0.15)
 
-        # ax = self.unlabeld_strs.plot.hist(bins=6, alpha=0.5)
-        # plt.savefig(f"look.pdf")
-        # plt.show()
-        # # input("continue")
-        # plt.clf()
 
         self.rating_df_unlabeld = df_to_tensor(self.rating_df_unlabeld)
         self.unlabeld_strs = df_to_tensor(self.unlabeld_strs, True).cpu()
 
-        # self.rating_df_unlabeld = None
-        # self.unlabeld_strs = []
         self.unlabeld_events = []
         self.hidden_size1 = 35
         self.hidden_size2 = 25
@@ -77,14 +67,18 @@ class ratingPredictor(nn.Module):
         self.linear_layer2 = nn.Linear(self.hidden_size1, self.hidden_size2).cuda()
         self.linear_layer3 = nn.Linear(self.hidden_size2, self.hidden_size3).cuda()
         self.linear_layer4 = nn.Linear(self.hidden_size3, MAX_RATING).cuda()
+
+        self.mistake_acc = None
+
+
         weights = torch.ones(MAX_RATING)
 
         weights[0] = 0.5
         weights[1] = 0.5
         weights[2] = 0.5
-        weights[4] = 5
+        # weights[4] = 5
+        # weights[-1] = 5
 
-        weights[-1] = 10
         # weights[-2] = 15
         # weights[-3] = 10
         # weights[-4] = 5
@@ -98,12 +92,11 @@ class ratingPredictor(nn.Module):
         test = data_utils.TensorDataset(self.rating_df_test, self.ratings_col_test)
         self.test_loader = data_utils.DataLoader(test, batch_size=512)
         self.softmax = nn.Softmax(dim=1)
-        self.lr = 5e-3
+        self.lr = 5e-4
         self.extra_ratings = [[] for _ in range(0, MAX_RATING)]
 
         self._fix_data_balance(first=True)
-        # input("Sdssf")
-        # self._create_data_aug(self.rating_df_train[0])
+        self.count = 0
 
     def label_manually(self, n, weights):
         def del_elements(containter, indexes):
@@ -123,12 +116,8 @@ class ratingPredictor(nn.Module):
         self.rating_df_train = torch.cat([self.rating_df_train, values])
         user_ratings = []
 
-        # print(f"Len! :{len(self.unlabeld_events)}")
-        # input("see")
         if len(self.unlabeld_events) == 0:
             user_ratings = np.array(self.unlabeld_strs)[sampled_indexes]
-            # for label in labels:
-            #     user_ratings.append(label)
 
         else:
             for str_pattern, events in zip(np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes]):
@@ -151,10 +140,8 @@ class ratingPredictor(nn.Module):
 
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
         self.train_loader = data_utils.DataLoader(train, batch_size=40)
-        # self.unlabeld_strs = list(self.unlabeld_strs)
 
     def forward(self, data):
-        # data = torch.tensor(data).cuda()
         data = data.cuda()
         data = self.linear_layer(data)
         data = self.dropout(data)
@@ -203,26 +190,26 @@ class ratingPredictor(nn.Module):
             prediction = self.predict(input_x)
             _, max_val = torch.max(prediction, dim=1)
             loss = self.criterion(prediction, target) * self.m_factor
-            # loss = self.criterion(prediction, target)
-            # new_distance = torch.mean(abs(max_val - target).float()).requires_grad_(True)
             new_distance = l1_loss(max_val.float(), target.float()).requires_grad_(True)
             loss += new_distance * (1 - self.m_factor)
             distance += new_distance
-            # loss = new_distance
             total_loss += loss.item()
             count_losses += 1
             correct += torch.sum(max_val == target).item()
-            mistakes = (max_val != target).cpu().numpy()
             if total_count % 25 == 0:
-
+                mistakes = (max_val != target).cpu().numpy()
                 for i, mistake in enumerate(mistakes):
                     if mistake:
                         add_value = 1.0
-                        if abs(max_val[i].item() - target[i]) <= 1:
+                        diff_val = abs(max_val[i].item() - target[i])
+                        if diff_val <= 1:
+                            add_value = 0.25
+                        elif diff_val <= 2:
                             add_value = 0.5
                         mistake_histogram[target[i]] += add_value
                 for tar in target:
                     lens_array[tar] += 1
+
             count_all += len(input_x)
             loss = loss.cuda()
             loss.backward()
@@ -230,16 +217,15 @@ class ratingPredictor(nn.Module):
 
         sched.step()
         acc = correct / count_all
-        # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-        # acc = sum(mistake_histogram) / sum(lens_array)
-        # if total_count % 25 == 0:
-        #     mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-        #     acc = sum(mistake_histogram) / sum(lens_array)
-        #     print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
-        #     print(f"Mistakes: {mistake_histogram}")
-        #     print(f"Mistakes %: {mistake_acc}")
-        #     # print(f"Train Avg distance {distance / len(self.train_loader)}")
-        #     print(f" Train acc = {acc}")
+        if total_count % 25 == 0:
+            acc = 1 - (sum(mistake_histogram) / sum(lens_array))
+            self.mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+            print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
+            # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+            print(f"Mistakes: {mistake_histogram}")
+            # print(f"Mistakes %: {self.mistake_acc}")
+            # print(f"Train Avg distance {distance / len(self.train_loader)}")
+            # print(f" Train acc = {acc}")
 
         return acc
 
@@ -261,30 +247,30 @@ class ratingPredictor(nn.Module):
             count_losses += 1
             _, max_val = torch.max(prediction, dim=1)
             correct += torch.sum(max_val == target).item()
-            mistakes = (max_val != target).cpu().numpy()
-            # if total_count % 25 == 0:
-            #
-            #     for i, mistake in enumerate(mistakes):
-            #         if mistake:
-            #             add_value = 1.0
-            #             if abs(max_val[i].item() - target[i]) <= 1:
-            #                 add_value = 0.5
-            #             mistake_histogram[target[i]] += add_value
-            #     for tar in target:
-            #         lens_array[tar] += 1
-            distance += torch.mean(abs(max_val - target).float())
+            if total_count % 25 == 0:
+                mistakes = (max_val != target).cpu().numpy()
+                for i, mistake in enumerate(mistakes):
+                    if mistake:
+                        add_value = 1.0
+                        diff_val = abs(max_val[i].item() -target[i])
+                        if diff_val <= 1:
+                            add_value = 0.25
+                        elif diff_val <= 2:
+                            add_value = 0.5
+                        mistake_histogram[target[i]] += add_value
+                for tar in target:
+                    lens_array[tar] += 1
+            # distance += torch.mean(abs(max_val - target).float())
             distance += l1_loss(max_val.float(), target.float()).requires_grad_(True)
             count_all += len(input_x)
 
         acc = correct / count_all
-
-        # if total_count % 25 == 0:
-        #     mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-        #     acc = sum(mistake_histogram) / sum(lens_array)
-        #
-        #     print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
-        #     print(f"Mistakes: {mistake_histogram}")
-        #     print(f"Mistakes %: {mistake_acc}")
+        if total_count % 25 == 0:
+            acc = 1 - (sum(mistake_histogram) / sum(lens_array))
+            # print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
+            mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+            # print(f"Mistakes: {mistake_histogram}")
+            # print(f"Mistakes %: {mistake_acc}")
 
         if not self.rating_df_unlabeld is None:
             all_outputs = None
@@ -325,7 +311,7 @@ class ratingPredictor(nn.Module):
     def _train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=30):
         torch.allow_unreachable=True
         total_count = 0
-        trial_count_reset = 25
+        trial_count_reset = 10
         acc, all_outs = self.test_single_epoch(total_count)
         trial_count = trial_count_reset
         acc = 0
@@ -336,13 +322,13 @@ class ratingPredictor(nn.Module):
             if new_lr != self.lr:
                 print(new_lr)
                 self.lr = new_lr
-                # input("Changed!")
             try:
                 self.train_single_epoch(optimizer, sched, total_count)
             except Exception as e:
                 print(e)
                 count_err += 1
                 print(f"num errors {count_err}")
+
             new_acc, all_outs = self.test_single_epoch(total_count)
             if new_acc <= acc:
                 trial_count -= 1
@@ -381,9 +367,9 @@ class ratingPredictor(nn.Module):
 
         if count < max_count:
             self.label_manually(n=n, weights=weights)
-            if count % 2 == 0:
-                self._fix_data_balance()
-            self.m_factor /= 1.1
+            # if count % 2 == 0:
+            #     self._fix_data_balance()
+            self.m_factor /= 1.05
             print("Finished cycle")
             self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
 
@@ -395,25 +381,35 @@ class ratingPredictor(nn.Module):
             copy_data[idx] = random.choice(copy_data)
         return copy_data
 
+    def save_all(self):
+        if not hasattr(self, 'count'):
+            self.count = 0
+        if not os.path.exists("Model/rating_weights"):
+            os.mkdir("Model/rating_weights")
+        torch.save(self.state_dict(), f"Model/rating_weights/model{str(self.count)}.pt")
+        self.count += 1
+
 
     def _fix_data_balance(self, first=False):
         def _over_sampeling(flatten, split_samples, max_add_extra=100):
             lens_array = np.array([len(i) for i in split_samples])
             print(lens_array)
-            # if first:
-            #     for rating, num_exmps in enumerate(lens_array):
-            #
-            #     return split_samples
             mean_len = lens_array.mean()
             for rating, num_exmps in enumerate(lens_array):
+                fix_flag = False
                 if first:
+                    fix_flag = True
                     max_add_extra = 300
-                # if num_exmps < mean_len * 1.5:
-                if len(self.extra_ratings[rating]) != 0:
+                if not self.mistake_acc is None:
+                    if self.mistake_acc[rating] > np.mean(self.mistake_acc) or lens_array[rating] < np.mean(lens_array):
+                        fix_flag = True
+                    else:
+                        fix_flag = False
+                if len(self.extra_ratings[rating]) != 0 and fix_flag:
                     extras = self.extra_ratings[rating][:max_add_extra]
                     extras = torch.stack(extras)
                     split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
-                else:
+                elif fix_flag:
                     augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
                     augs = torch.stack(augs)
                     labels = torch.ones(len(split_samples[rating])) * rating
@@ -489,6 +485,8 @@ class ratingPredictor(nn.Module):
         self.rating_df_train = self.rating_df_train.cuda()
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
         self.train_loader = data_utils.DataLoader(train, batch_size=64, shuffle=True)
+
+
 
 
 def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):

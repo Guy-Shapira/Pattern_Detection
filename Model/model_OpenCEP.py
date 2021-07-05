@@ -20,6 +20,7 @@ from Model.utils import (
     store_to_file,
     replace_values,
     run_OpenCEP,
+    check_predictor,
 )
 
 from Model.rating_module import (
@@ -142,7 +143,7 @@ class ruleMiningClass(nn.Module):
         self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
 
         # self._create_training_dir(data_path)
-        # input("finished training dir creation")
+        # print("finished training dir creation")
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         self.all_cols = all_cols
@@ -287,16 +288,20 @@ class ruleMiningClass(nn.Module):
             df_new = pd.read_csv(f"Processed_knn/{self.pattern_path}/df")
 
 
-        knn = KNN(n_neighbors=1)
+        knn = KNN(n_neighbors=5)
         knn.fit(df_new, df["rating"])
         self.knn_avg = df.rating.mean()
 
         test_pred = ratingPredictor(df_new, df["rating"])
-        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-3, weight_decay=0.01)
-        self.pred_sched = StepLR(self.pred_optim, step_size=200, gamma=0.3)
-        test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=60, n=5)
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-4)
+        self.pred_sched = StepLR(self.pred_optim, step_size=300, gamma=0.3)
+
+        if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+            test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=3, max_total_count=50, n=5)
+            torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+        else:
+            test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
         print(len(test_pred.ratings_col_train))
-        # exit()
         self.pred_pattern = test_pred
         self.pred_pattern.rating_df_unlabeld = None
         self.pred_pattern.unlabeld_strs = []
@@ -590,7 +595,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
-    run_name = f"StarPilot Exp! fixed window"
+    run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size}"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -809,22 +814,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                         lines = content.split("\n")
                                         row_idx = 0
                                         for num, line in enumerate(lines):
-                                            # print(f"ts {first_ts}, line: {line}")
                                             if line.startswith(first_ts):
                                                 row_idx = num
                                                 break
-                                        # input("next")
                                         chunk_size = EMBDEDDING_TOTAL_SIZE * row_idx
-                                        # print(chunk_size)
-                                        # input("wait")
-                                        # data = data.detach()
-                                        # set_data = data.clone().detach().cuda()
                                         set_data = torch.tensor([i for i in data])
                                         set_data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
-                                        # data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
-                                        # print(chunk_size)
-                                        # print(set_data[:chunk_size])
-                                        # print(set_data)
                                     except Exception as e:
                                         print(e)
                                         print(f"Reward : {reward}")
@@ -965,7 +960,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
 
             if epoch < 2:
-                model.pred_pattern._train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=40, n=3)
+                model.pred_pattern.save_all()
+                model.pred_pattern.train()
+                model.pred_pattern._train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=50, n=3)
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1210,10 +1207,9 @@ def main(parser):
     first = True
     suggested_models = []
     all_patterns = []
-
-    # for window_size in [350, 450, 550]:
-    for split_factor in range(60, 80, 10):
-        # window_size = 375
+    split_factor = 60
+    # for split_factor in range(60, 80, 10):
+    for window_size in [300]:
         eff_split_factor = split_factor / 100
         global class_inst
         class_inst = ruleMiningClass(data_path=args.data_path,
@@ -1221,7 +1217,7 @@ def main(parser):
                                     events_path=args.events_path,
                                     num_events=args.num_events,
                                     match_max_size=args.max_size,
-                                    window_size=args.window_size,
+                                    window_size=window_size,
                                     max_fine_app=args.max_fine_app,
                                     max_values=max_vals,
                                     normailze_values=norm_vals,
@@ -1233,37 +1229,32 @@ def main(parser):
                                     exp_name=args.exp_name,
                                     init_flag=True)
 
-            # optimizer = BayesianOptimization(
-            #     f=bayesian_lr_search,
-            #     pbounds={'lr': (1e-9, 1e-6)},
-            #     random_state=1,
-            # )
-            # optimizer.maximize(
-            #     init_points=5,
-            #     n_iter=5,
-            # )
-            # result = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
-            # return
-        result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
-        all_patterns.append(patterns)
-        cuda_handle.empty_cache()
-        print(patterns)
-        results.update({split_factor: result})
-        suggested_models.append({split_factor: class_inst})
-    print(results)
-    pareto_results = np.array(list(results.values()))
-    pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
-    print(pareto_results)
-    patero_results = is_pareto_efficient(pareto_results)
-    good_patterns = []
-    for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
-        if patero_res:
-            print(model)
-            good_patterns.extend(list(patterns))
+        check_predictor(class_inst)
+
+        if 0:
+            result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
+            all_patterns.append(patterns)
+            cuda_handle.empty_cache()
             print(patterns)
+            results.update({split_factor: result})
+            suggested_models.append({split_factor: class_inst})
+
+    if 0:
+        print(results)
+        pareto_results = np.array(list(results.values()))
+        pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
+        print(pareto_results)
+        patero_results = is_pareto_efficient(pareto_results)
+        good_patterns = []
+        for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
+            if patero_res:
+                print(model)
+                good_patterns.extend(list(patterns))
+                print(patterns)
 
 
-    run_OpenCEP(events=args.final_data_path, patterns=good_patterns, test_name="secondLevel27April")
+        run_OpenCEP(events=args.final_data_path, patterns=good_patterns, test_name="secondLevel27April")
+
     return
 
 
