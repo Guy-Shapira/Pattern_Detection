@@ -117,7 +117,7 @@ class genDataClass(nn.Module):
     #
 
 
-def genData(model, num_epochs=15):
+def genData(model, num_epochs=25):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)  # need to remove + 1
@@ -180,6 +180,8 @@ def genData(model, num_epochs=15):
                     next_targets = random.choices(comp_targets, k=len(model.cols))
                     next_actions = random.choices(model.all_actions, k=len(model.cols))
                     next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    actions.append(next_actions)
+
                     next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
                     next_targets[0] = 2
                     if direction == "x":
@@ -190,7 +192,6 @@ def genData(model, num_epochs=15):
                         next_actions[2] = "<"
 
                     comp_values.append(next_comp_vals)
-                    actions.append(next_actions)
                     all_comps.append(next_targets)
                     all_conds.append(next_conds)
                     next_targets = random.choices(comp_targets, k=len(model.cols))
@@ -421,10 +422,10 @@ def genData(model, num_epochs=15):
                         next_targets = random.choices(comp_targets, k=len(model.cols))
                         next_actions = random.choices(model.all_actions, k=len(model.cols))
                         next_conds = random.choices(["and", "or"], k=len(model.cols))
+                        actions.append(next_actions)
                         next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
 
                         comp_values.append(next_comp_vals)
-                        actions.append(next_actions)
                         all_comps.append(next_targets)
                         all_conds.append(next_conds)
 
@@ -457,7 +458,7 @@ def genData(model, num_epochs=15):
                     actions.append(next_actions)
                     next_conds = random.choices(["and", "or"], k=len(model.cols))
                     all_conds.append(next_conds)
-                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    next_comp_vals = ["value" if "v" in act else chr(ord("a") + random.choice(range(model.match_max_size))) + "." + cols[i] for i, act in enumerate(actions[-1])]
                     comp_values.append(next_comp_vals)
                     next_targets = random.choices(comp_targets, k=len(model.cols))
                     all_comps.append(next_targets)
@@ -469,10 +470,10 @@ def genData(model, num_epochs=15):
                         next_targets = random.choices(comp_targets, k=len(model.cols))
                         next_actions = random.choices(model.all_actions, k=len(model.cols))
                         next_conds = random.choices(["and", "or"], k=len(model.cols))
-                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                        actions.append(next_actions)
+                        next_comp_vals = ["value" if "v" in act else chr(ord("a") + random.choice(range(model.match_max_size))) + "." + cols[i] for i, act in enumerate(actions[-1])]
 
                         comp_values.append(next_comp_vals)
-                        actions.append(next_actions)
                         all_comps.append(next_targets)
                         all_conds.append(next_conds)
 
@@ -485,10 +486,11 @@ def genData(model, num_epochs=15):
                         next_targets = random.choices(comp_targets, k=len(model.cols))
                         next_actions = random.choices(model.all_actions, k=len(model.cols))
                         next_conds = random.choices(["and", "or"], k=len(model.cols))
-                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                        actions.append(next_actions)
+
+                        next_comp_vals = ["value" if "v" in act else chr(ord("a") + random.choice(range(model.match_max_size))) + "." + cols[i] for i, act in enumerate(actions[-1])]
 
                         comp_values.append(next_comp_vals)
-                        actions.append(next_actions)
                         all_comps.append(next_targets)
                         all_conds.append(next_conds)
 
