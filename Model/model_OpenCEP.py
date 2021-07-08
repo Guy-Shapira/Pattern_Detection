@@ -1229,9 +1229,9 @@ def main(parser):
                                     exp_name=args.exp_name,
                                     init_flag=True)
 
-        check_predictor(class_inst)
+        # check_predictor(class_inst)
 
-        if 0:
+        if 1:
             result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=eff_split_factor, rating_flag=rating_flag)
             all_patterns.append(patterns)
             cuda_handle.empty_cache()
