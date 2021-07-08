@@ -441,7 +441,9 @@ class ruleMiningClass(nn.Module):
             x1 *= 0.1
             x2 *= 1.5
         combined = torch.cat((x1, x2)).cuda()
-        after_relu = F.relu(self.linear_finish(combined))
+        # after_relu = F.relu(self.linear_finish(combined))
+        after_relu = F.leaky_relu(self.linear_finish(combined))
+        # leaky_relu
         # x = F.relu(self.linear_base(input.cuda()))
 
         value_reward = self.critic_reward(after_relu)
@@ -482,7 +484,8 @@ class ruleMiningClass(nn.Module):
             return masked_exps / masked_sums
 
 
-        x = F.relu(self.action_layers[index](data))
+        # x = F.relu(self.action_layers[index](data))
+        x = F.leaky_relu(self.action_layers[index](data))
         mask = [1.0] * self.num_actions
         mask[-1] = 20
         mask = torch.tensor([float(i)/sum(mask) for i in mask])
@@ -522,7 +525,8 @@ class ruleMiningClass(nn.Module):
             after_pattern *= 1.5
 
         updated_data = torch.cat((after_base, after_pattern))
-        after_relu = F.relu(self.linear_finish(updated_data))
+        # after_relu = F.relu(self.linear_finish(updated_data))
+        after_relu = F.leaky_relu(self.linear_finish(updated_data))
         for i in range(self.num_cols):
             action, value, log, entropy = self.single_col_mini_action(after_relu, i, training_factor) #this is weird, should update data after actions
             mini_actions_vals.append(action)
