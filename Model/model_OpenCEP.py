@@ -630,7 +630,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     )
     max_rating = []
     entropy_term, turn_flag = 0, 0
-    training_factor = 0.6
+    training_factor = 0.8
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
     total_count = -5
@@ -770,11 +770,14 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                 verbose=0,
                             )
                             try:
+                            # print(bayesian_dict)
+                            # input("wait here")
                                 b_optimizer.maximize(
-                                    init_points=2,
-                                    n_iter=3,
+                                    init_points=30,
+                                    n_iter=0,
+                                    n_restarts_optimizer=50,
                                 )
-                                selected_values = list(b_optimizer.max['params'].values())
+                            selected_values = list(b_optimizer.max['params'].values())
                             except Exception as e:
                                 # empty range, just use min to max values as range instade
                                 selected_values = [max(model.normailze_values) for _ in range(len(bayesian_dict))]
