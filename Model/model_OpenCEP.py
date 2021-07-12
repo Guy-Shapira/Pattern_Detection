@@ -21,6 +21,7 @@ from Model.utils import (
     replace_values,
     run_OpenCEP,
     check_predictor,
+    calc_near_windows,
 )
 
 from Model.rating_module import (
@@ -664,7 +665,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             in_round_count = 0
             path = os.path.join(absolutePath, "Model", "training")
             data_len = len(os.listdir(path))
-            for index in range(epoch, data_len, data_len // bs):
+            for index in range(epoch + 1, data_len - 1, data_len // bs):
                 set_data = None
                 if total_count >= bs:
                     total_count = 0
@@ -824,7 +825,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
                                 content = f.read()
                                 reward = int(content.count("\n") / (len(actions) + 1))
+                                if reward >= model.max_fine_app:
+                                    reward = 2 * model.max_fine_app - reward
                                 global EMBDEDDING_TOTAL_SIZE
+                                near_windows_rewards = calc_near_windows(index, pattern, action, model.max_fine_app)
+                                reward = reward * 1/2 + near_windows_rewards * 0.5
                                 if reward != 0:
                                     try:
                                         first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
@@ -843,16 +848,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                         print(e)
                                         print(f"Reward : {reward}")
                                         raise(e)
-                                        pass
-
-                                if reward >= model.max_fine_app:
-                                    reward = 2 * model.max_fine_app - reward
-
                                 real_rewards.append(reward)
-                                if reward == 0 and turn_flag:
-                                    normalize_reward.append(-25)
-                                    rewards.append(-1.5)
-                                    break
+                                # if reward == 0 and turn_flag:
+                                #     normalize_reward.append(-25)
+                                #     rewards.append(-1.5)
+                                #     break
                                 normalize_reward.append(reward - 20)
                                 #TODO: Remove this!
                                 # reward *= rating

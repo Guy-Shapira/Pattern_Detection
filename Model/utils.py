@@ -38,7 +38,7 @@ import csv
 import pickle
 import timeout_decorator
 import copy
-
+import math
 
 from Model.rating_module import (
     model_based_rating,
@@ -101,8 +101,10 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
                 Variable(bindings[0], lambda x: x[attribute]), value
             )
         elif action_type.startswith("="):
-            return EqCondition(
-                Variable(bindings[0], lambda x: x[attribute]), value
+            return BinaryCondition(
+                Variable(bindings[0], lambda x: x[attribute]),
+                Variable(value, lambda x: x),
+                lambda x, y: np.isclose(x, y, 0.001)
             )
         elif action_type.startswith("not<"):
             return GreaterThanEqCondition(
@@ -336,12 +338,22 @@ def run_OpenCEP(
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
-    # print(output_file_name)
-    # print(test_name)
-    # print(patterns)
-    # input("wtf")
     return running_time
 
+
+def calc_near_windows(index, pattern, actions, max_fine_app):
+    run_OpenCEP(str(index - 1), [pattern])
+    run_OpenCEP(str(index + 1), [pattern])
+    reward = 0
+    for ind in [index - 1 , index + 1]
+    with open("Data/Matches/{}Matches.txt".format(ind), "r") as f:
+        content = f.read()
+        new_reward = int(content.count("\n") / (len(actions) + 1))
+        if new_reward >= max_fine_app:
+            new_reward = 2 * max_fine_app - new_reward
+        reward += new_reward
+
+    return reward / 2
 
 
 
@@ -568,17 +580,22 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
     count = 0
     for col_count, (val, col) in enumerate(zip(comp_vals, df.columns[1:])):
         if not val == "nop":
-            return_dict.update({"x_" + str(count):
-                (max([float(df[col].min()) - 10, min_values[col_count] + 1]),
-                 min([float(df[col].max() + 10), max_values[col_count] - 1]))
-                 })
+            max_val = min([float(df[col].max() + 10), max_values[col_count] - 1])
+            if math.isnan(max_val):
+                return_dict.update({"x_" + str(count): (min_values[col_count] -1, max_values[col_count] + 1)})
+            else:
+                # min_val = max([float(df[col].min()) - 10, min_values[col_count] + 1])
+                min_val = 0.2
+                return_dict.update({"x_" + str(count): (min_val, max_val)})
             count += 1
+            # print((float(max([float(df[col].min()) - 10, min_values[col_count] + 1])),
+            #       float(min([float(df[col].max() + 10), max_values[col_count] - 1]))))
 
     return return_dict
 
 
 
-
+@timeout_decorator.timeout(20)
 def bayesian_function(**values):
     """
     list of values to do bayesian serach on, each value has it's predefined range
@@ -620,12 +637,11 @@ def bayesian_function(**values):
         actions, action_types, index, try_comp_vals, cols, conds, targets, max_time
     )
     # checks and return output
-
     with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
         reward = int(f.read().count("\n") / (len(actions) + 1))
         if reward >= max_fine:
-            reward = 2 * max_fine - reward
-        return reward + random.uniform(1e-9, 1e-7) #epsilon added in case of 0
+            reward = max(0, 2 * max_fine - reward)
+        return reward + random.uniform(1e-2, 5e-2) #epsilon added in case of 0
 
 
 
