@@ -12,13 +12,17 @@ import copy
 import os
 
 PATTERN_LEN = 40
-MAX_RATING = 10
+MAX_RATING = 50
 random.seed(42)
 np.seterr('raise')
 SPLIT_1 = 39000
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
+
+# SPLIT_1 = 3900
+# SPLIT_2 = 4000
+# SPLIT_3 = 4100
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -34,18 +38,21 @@ class ratingPredictor(nn.Module):
         ratings_col,
     ):
         super().__init__()
-        ratings_col = ratings_col.apply(lambda x: min(x, 9))
+        ratings_col = ratings_col.apply(lambda x: min(x, 49))
         self.rating_df_train = rating_df[:SPLIT_1]
         self.ratings_col_train = ratings_col[:SPLIT_1]
 
-        ax = self.ratings_col_train.plot.hist(bins=6, alpha=0.5)
+        ax = self.ratings_col_train.plot.hist(bins=25, alpha=0.5)
+        plt.show()
+        plt.savefig(f"look.pdf")
+        # input()
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
 
         self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
         self.ratings_col_test = ratings_col[SPLIT_2:SPLIT_3]
-        self.m_factor = 0.9
+        self.m_factor = 0.3
 
         self.rating_df_test = df_to_tensor(self.rating_df_test)
         self.ratings_col_test = df_to_tensor(self.ratings_col_test, True)
@@ -78,6 +85,8 @@ class ratingPredictor(nn.Module):
         weights[2] = 0.5
         # weights[4] = 5
         # weights[-1] = 5
+        weights[20:30] = torch.tensor([2] * 10)
+        weights[-10:] = torch.tensor([3] * 10)
 
         # weights[-2] = 15
         # weights[-3] = 10
@@ -86,11 +95,14 @@ class ratingPredictor(nn.Module):
         # weights[-6] = 2
         # weights[-7] = 5
         weights = weights.cuda()
+        self.weights = weights
         self.criterion = nn.CrossEntropyLoss(weight=weights)
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
         self.train_loader = data_utils.DataLoader(train, batch_size=256)
+        # self.train_loader = data_utils.DataLoader(train, batch_size=64)
         test = data_utils.TensorDataset(self.rating_df_test, self.ratings_col_test)
         self.test_loader = data_utils.DataLoader(test, batch_size=512)
+        # self.test_loader = data_utils.DataLoader(test, batch_size=64)
         self.softmax = nn.Softmax(dim=1)
         self.lr = 5e-4
         self.extra_ratings = [[] for _ in range(0, MAX_RATING)]
@@ -139,7 +151,7 @@ class ratingPredictor(nn.Module):
         self.unlabeld_events = del_elements(self.unlabeld_events, sampled_indexes)
 
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
-        self.train_loader = data_utils.DataLoader(train, batch_size=40)
+        self.train_loader = data_utils.DataLoader(train, batch_size=256)
 
     def forward(self, data):
         data = data.cuda()
@@ -181,10 +193,11 @@ class ratingPredictor(nn.Module):
         total_loss = 0
         count_losses, count_all = 0, 0
         distance = 0
-        l1_loss = nn.L1Loss()
+        l1_loss = nn.SmoothL1Loss()
         self.train()
         mistake_histogram = np.zeros(MAX_RATING)
-        lens_array = np.zeros(MAX_RATING)
+        # lens_array = np.zeros(MAX_RATING)
+        lens_array = np.ones(MAX_RATING)
         for input_x, target in self.train_loader:
             optimizer.zero_grad()
             prediction = self.predict(input_x)
@@ -202,27 +215,34 @@ class ratingPredictor(nn.Module):
                     if mistake:
                         add_value = 1.0
                         diff_val = abs(max_val[i].item() - target[i])
-                        if diff_val <= 1:
+                        if diff_val <= 7:
                             add_value = 0.25
-                        elif diff_val <= 2:
+                        elif diff_val <= 15:
                             add_value = 0.5
                         mistake_histogram[target[i]] += add_value
                 for tar in target:
                     lens_array[tar] += 1
 
             count_all += len(input_x)
+
             loss = loss.cuda()
             loss.backward()
             optimizer.step()
 
-        sched.step()
+        if not sched is None:
+            sched.step()
         acc = correct / count_all
         if total_count % 25 == 0:
             acc = 1 - (sum(mistake_histogram) / sum(lens_array))
             self.mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
             print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
             # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-            print(f"Mistakes: {mistake_histogram}")
+            print(f"Mistakes: {mistake_histogram / lens_array}")
+            for i, value in enumerate(mistake_histogram / lens_array):
+                if value < 0.1:
+                    self.weights[i] -= 0.1
+                elif value > 0.8:
+                    self.weights[i] += 0.2
             # print(f"Mistakes %: {self.mistake_acc}")
             # print(f"Train Avg distance {distance / len(self.train_loader)}")
             # print(f" Train acc = {acc}")
@@ -235,10 +255,11 @@ class ratingPredictor(nn.Module):
         count_losses, count_all = 0, 0
         all_outputs = None
         distance = 0
-        l1_loss = nn.L1Loss()
+        l1_loss = nn.SmoothL1Loss()
         self.eval()
         mistake_histogram = np.zeros(MAX_RATING)
-        lens_array = np.zeros(MAX_RATING)
+        # lens_array = np.zeros(MAX_RATING)
+        lens_array = np.ones(MAX_RATING)
 
         for input_x, target in self.test_loader:
             prediction = self.predict(input_x)
@@ -253,9 +274,9 @@ class ratingPredictor(nn.Module):
                     if mistake:
                         add_value = 1.0
                         diff_val = abs(max_val[i].item() -target[i])
-                        if diff_val <= 1:
+                        if diff_val <= 7:
                             add_value = 0.25
-                        elif diff_val <= 2:
+                        elif diff_val <= 15:
                             add_value = 0.5
                         mistake_histogram[target[i]] += add_value
                 for tar in target:
@@ -308,27 +329,27 @@ class ratingPredictor(nn.Module):
         # self.unlabeld_strs = list(self.unlabeld_strs)
 
 
-    def _train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=30):
+    def _train(self, optimizer, sched, count=0, max_count=25, max_total_count=20, n=30, retrain=False):
         torch.allow_unreachable=True
         total_count = 0
-        trial_count_reset = 10
+        trial_count_reset = 25
         acc, all_outs = self.test_single_epoch(total_count)
         trial_count = trial_count_reset
         acc = 0
         weights = None
         count_err = 0
         while trial_count > 0:
-            new_lr = optimizer.param_groups[0]['lr']
-            if new_lr != self.lr:
-                print(new_lr)
-                self.lr = new_lr
+            # new_lr = optimizer.param_groups[0]['lr']
+            # if new_lr != self.lr:
+            #     print(new_lr)
+            #     self.lr = new_lr
             try:
                 self.train_single_epoch(optimizer, sched, total_count)
             except Exception as e:
                 print(e)
                 count_err += 1
                 print(f"num errors {count_err}")
-
+                raise e
             new_acc, all_outs = self.test_single_epoch(total_count)
             if new_acc <= acc:
                 trial_count -= 1
@@ -366,13 +387,19 @@ class ratingPredictor(nn.Module):
 
 
         if count < max_count:
-            self.label_manually(n=n, weights=weights)
-            # if count % 2 == 0:
+            # self.label_manually(n=n, weights=weights)
+            # if (not retrain) and count % 2 == 0:
             #     self._fix_data_balance()
-            self.m_factor /= 1.05
+            # self.m_factor /= 1.05
+            self._update_weights()
             print("Finished cycle")
+
             self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
 
+
+    def _update_weights(self):
+        self.weights = self.weights.cuda()
+        self.criterion = nn.CrossEntropyLoss(weight=self.weights)
 
     def _create_data_aug(self, data_inst):
         copy_data = data_inst.clone()
@@ -484,15 +511,20 @@ class ratingPredictor(nn.Module):
 
         self.rating_df_train = self.rating_df_train.cuda()
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
-        self.train_loader = data_utils.DataLoader(train, batch_size=64, shuffle=True)
+        self.train_loader = data_utils.DataLoader(train, batch_size=256, shuffle=True)
 
 
 
 
-def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=False):
+def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch=0, pred_flag=False):
     if rating_flag:
         if pred_flag:
-            return model_based_rating(model, events, all_conds, str_pattern, actions)
+            model_rating, norm_rating,  = model_based_rating(model, events, all_conds, str_pattern, actions)
+            if len(events) == 1:
+                return model_rating - 0.5, norm_rating
+            else:
+                # return (model_rating + 0.1 * len(events)) * (1.05 ** (epoch + 1)), norm_rating
+                return (model_rating + 0.1 * len(events)) * (1 ** (epoch + 1)), norm_rating
         else:
             return knn_based_rating(model, events, all_conds, str_pattern, actions)
     else:

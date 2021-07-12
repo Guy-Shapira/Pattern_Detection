@@ -236,7 +236,7 @@ class ruleMiningClass(nn.Module):
 
         self.list_of_dfs = []
         df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
-        df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 9))
+        df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 49))
         # print(os.path.exists(f"Processed_knn/{self.pattern_path}"))
         if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
             print("Creating Knn!")
@@ -293,14 +293,17 @@ class ruleMiningClass(nn.Module):
         self.knn_avg = df.rating.mean()
 
         test_pred = ratingPredictor(df_new, df["rating"])
-        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=5e-4)
-        self.pred_sched = StepLR(self.pred_optim, step_size=300, gamma=0.3)
+        self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=1e-4)
+        self.pred_sched = StepLR(self.pred_optim, step_size=3000, gamma=0.3)
 
         if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-            test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=3, max_total_count=50, n=5)
+            test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
             torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
         else:
             test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            #TODO: remove!
+            # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=50, n=0)
+
         print(len(test_pred.ratings_col_train))
         self.pred_pattern = test_pred
         self.pred_pattern.rating_df_unlabeld = None
@@ -439,7 +442,7 @@ class ruleMiningClass(nn.Module):
         # if num_epochs_trained >= 1:
         if np.random.rand() <= 1 - training_factor:
             x1 *= 0.1
-            x2 *= 1.5
+            x2 *= 5.5
         combined = torch.cat((x1, x2)).cuda()
         # after_relu = F.relu(self.linear_finish(combined))
         after_relu = F.leaky_relu(self.linear_finish(combined))
@@ -522,7 +525,7 @@ class ruleMiningClass(nn.Module):
         after_pattern = self.spread_patterns(old_desicions.cuda())
         if np.random.rand() <= 1 - training_factor:
             after_base *= 0.1
-            after_pattern *= 1.5
+            after_pattern *= 5.5
 
         updated_data = torch.cat((after_base, after_pattern))
         # after_relu = F.relu(self.linear_finish(updated_data))
@@ -599,7 +602,8 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
-    run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size}"
+    # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"
+    run_name = f"50 ratings"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -703,7 +707,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     training_factor /= 1.2
                 while not is_done:
                     if not set_data is None:
+                        # print(data)
                         data = set_data.clone().detach().requires_grad_(True)
+                        # print(data)
+                        # input("check change")
                         set_data = None
                     data = data.cuda()
                     mask_orig = mask.clone()
@@ -773,12 +780,14 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             # print(bayesian_dict)
                             # input("wait here")
                                 b_optimizer.maximize(
-                                    init_points=30,
+                                    init_points=10,
                                     n_iter=0,
-                                    n_restarts_optimizer=50,
                                 )
-                            selected_values = list(b_optimizer.max['params'].values())
+                                selected_values = [round(selected_val, 3) for selected_val in b_optimizer.max['params'].values()]
                             except Exception as e:
+                                print(e)
+                                raise(e)
+                                input("what")
                                 # empty range, just use min to max values as range instade
                                 selected_values = [max(model.normailze_values) for _ in range(len(bayesian_dict))]
                             comp_vals = replace_values(comp_vals, selected_values)
@@ -795,7 +804,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             not_finished_count += 1
 
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-                        rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, pred_flag=True)
+                        rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
+
+                        #TODO: remove, added for sacle factor testing
+                        # rating /= 5
 
                         ratings.append(rating)
                         normalize_rating.append(norm_rating)
@@ -813,7 +825,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                 content = f.read()
                                 reward = int(content.count("\n") / (len(actions) + 1))
                                 global EMBDEDDING_TOTAL_SIZE
-                                if len(actions) == 1 and reward != 0:
+                                if reward != 0:
                                     try:
                                         first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
                                         with open(file, "r") as data_file:
@@ -830,6 +842,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                     except Exception as e:
                                         print(e)
                                         print(f"Reward : {reward}")
+                                        raise(e)
                                         pass
 
                                 if reward >= model.max_fine_app:
@@ -841,7 +854,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                     rewards.append(-1.5)
                                     break
                                 normalize_reward.append(reward - 20)
-                                reward *= rating
+                                #TODO: Remove this!
+                                # reward *= rating
+                                reward *= (rating / 5)
                                 rewards.append(reward)
                                 if len(best_found) < 10:
                                     best_found.update({reward: pattern})
@@ -894,6 +909,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                             sum([t != "nop" for sub in comp_values for t in sub]),
                         )
                     )
+                    if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
+                        wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max], "max rating": np.max(ratings)})
+
                     str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
                      comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
                     sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
@@ -926,8 +944,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 np.mean(real[t : t + GRAPH_VALUE])
                 for t in range(0, len(real), GRAPH_VALUE)
             ]
-            for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
-                wandb.log({"reward": rew, "rating": rat, "max rating": max_rat})
+            # for rew, rat, max_rat in zip(real_groups[-int(bs / GRAPH_VALUE):], rating_groups[-int(bs / GRAPH_VALUE):], max_ratings_group[-int(bs / GRAPH_VALUE):]):
+            #     wandb.log({"reward": rew, "rating": rat, "max rating": max_rat})
             fig, (ax1, ax2) = plt.subplots(2, constrained_layout=True)
 
             ax1.set_xlabel("Episode")
@@ -968,8 +986,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
             if epoch < 2:
                 model.pred_pattern.save_all()
-                model.pred_pattern.train()
-                model.pred_pattern._train(model.pred_optim, model.pred_sched, count=0, max_count=3, max_total_count=50, n=3)
+                # model.pred_pattern.train()
+                # model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
+                # model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
             if False:
                 after_epoch_test(best_pattern)
                 with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1214,7 +1233,7 @@ def main(parser):
     first = True
     suggested_models = []
     all_patterns = []
-    split_factor = 60
+    split_factor = 50
     # for split_factor in range(60, 80, 10):
     for window_size in [300]:
         eff_split_factor = split_factor / 100
@@ -1245,6 +1264,7 @@ def main(parser):
             print(patterns)
             results.update({split_factor: result})
             suggested_models.append({split_factor: class_inst})
+            exit()
 
     if 0:
         print(results)
@@ -1271,7 +1291,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--epochs', default=7, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=1e-7, type=float, help='starting learning rate')
+    parser.add_argument('--lr', default=5e-7, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
