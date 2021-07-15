@@ -143,8 +143,8 @@ class ruleMiningClass(nn.Module):
         self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
         self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
 
-        # self._create_training_dir(data_path)
-        # print("finished training dir creation")
+        self._create_training_dir(data_path)
+        print("finished training dir creation!")
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         self.all_cols = all_cols
@@ -354,7 +354,7 @@ class ruleMiningClass(nn.Module):
             all_data = sliding_window_data
 
         elif self.exp_name == "StarPilot":
-            files = os.listdir(data_path)[:300]
+            files = os.listdir(data_path)[:500]
             for file in files:
                 data = None
                 sliding_window_data = None
@@ -604,7 +604,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
     # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"
-    run_name = f"50 ratings"
+    run_name = f"200 window 50 ratings, near windows calc fixed"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -665,7 +665,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             in_round_count = 0
             path = os.path.join(absolutePath, "Model", "training")
             data_len = len(os.listdir(path))
-            for index in range(epoch + 1, data_len - 1, data_len // bs):
+            for index in range(epoch + 2, data_len - 2, data_len // bs):
                 set_data = None
                 if total_count >= bs:
                     total_count = 0
@@ -828,8 +828,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                 if reward >= model.max_fine_app:
                                     reward = 2 * model.max_fine_app - reward
                                 global EMBDEDDING_TOTAL_SIZE
-                                near_windows_rewards = calc_near_windows(index, pattern, action, model.max_fine_app)
-                                reward = reward * 1/2 + near_windows_rewards * 0.5
                                 if reward != 0:
                                     try:
                                         first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
@@ -848,6 +846,15 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                         print(e)
                                         print(f"Reward : {reward}")
                                         raise(e)
+
+                                try:
+                                    near_windows_rewards = calc_near_windows(index, pattern, len(actions),
+                                        model.max_fine_app, model.window_size, data_len)
+                                    reward = reward * 0.75 + near_windows_rewards * 0.25
+
+                                except Exception as e:
+                                    print(e)
+                                    pass
                                 real_rewards.append(reward)
                                 # if reward == 0 and turn_flag:
                                 #     normalize_reward.append(-25)
@@ -1233,9 +1240,9 @@ def main(parser):
     first = True
     suggested_models = []
     all_patterns = []
-    split_factor = 50
+    split_factor = 60
     # for split_factor in range(60, 80, 10):
-    for window_size in [300]:
+    for window_size in [200]:
         eff_split_factor = split_factor / 100
         global class_inst
         class_inst = ruleMiningClass(data_path=args.data_path,
@@ -1291,7 +1298,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--epochs', default=7, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=5e-7, type=float, help='starting learning rate')
+    parser.add_argument('--lr', default=1e-7, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')

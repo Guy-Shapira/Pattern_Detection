@@ -267,7 +267,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
-@timeout_decorator.timeout(100)
+@timeout_decorator.timeout(50)
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
@@ -340,20 +340,24 @@ def run_OpenCEP(
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
-
-def calc_near_windows(index, pattern, actions, max_fine_app):
-    run_OpenCEP(str(index - 1), [pattern])
-    run_OpenCEP(str(index + 1), [pattern])
+@timeout_decorator.timeout(20)
+def calc_near_windows(index, pattern, pattern_len, max_fine_app, window_size, data_len):
     reward = 0
-    for ind in [index - 1 , index + 1]
-    with open("Data/Matches/{}Matches.txt".format(ind), "r") as f:
-        content = f.read()
-        new_reward = int(content.count("\n") / (len(actions) + 1))
-        if new_reward >= max_fine_app:
-            new_reward = 2 * max_fine_app - new_reward
-        reward += new_reward
+    jump_val = window_size / 2
+    near_windows = [index - 2 * jump_val, index - jump_val, index + jump_val, index + 2 * jump_val]
+    near_windows = [int(i) for i in near_windows]
+    near_windows = list(filter(lambda x: x > 0 and x < data_len - 1, near_windows))
 
-    return reward / 2
+    for ind in [index - 1 , index + 1]:
+        run_OpenCEP(str(ind), [pattern])
+        with open("Data/Matches/{}Matches.txt".format(ind), "r") as f:
+            content = f.read()
+            new_reward = int(content.count("\n") / (pattern_len + 1))
+            if new_reward >= max_fine_app:
+                new_reward = 2 * max_fine_app - new_reward
+            reward += new_reward
+
+    return reward / len(near_windows)
 
 
 

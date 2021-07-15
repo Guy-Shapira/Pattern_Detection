@@ -524,7 +524,7 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
                 return model_rating - 0.5, norm_rating
             else:
                 # return (model_rating + 0.1 * len(events)) * (1.05 ** (epoch + 1)), norm_rating
-                return (model_rating + 0.1 * len(events)) * (1 ** (epoch + 1)), norm_rating
+                return (model_rating + 0.3 * len(events)), norm_rating
         else:
             return knn_based_rating(model, events, all_conds, str_pattern, actions)
     else:
