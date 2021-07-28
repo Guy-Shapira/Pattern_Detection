@@ -1,0 +1,23 @@
+early_terminate:
+  max_iter: 5
+  s: 2
+  type: hyperband
+method: bayes
+metric:
+  goal: maximize
+  name: reward
+  target: 50
+parameters:
+  lr:
+    distribution: uniform
+    max: 0.0005
+    min: 5e-07
+  split_factor:
+    distribution: uniform
+    max: 0.6
+    min: 0.1
+  window_size:
+    distribution: int_uniform
+    max: 500
+    min: 250
+program: Model/model_OpenCEP.py

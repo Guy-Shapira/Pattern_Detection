@@ -482,22 +482,24 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
         Qval = rewards[t] + GAMMA * Qval
         Qvals[t] = Qval
 
-    values = torch.FloatTensor(values)
-    Qvals = torch.FloatTensor(Qvals)
-    log_probs = torch.stack(log_probs)
+    values = torch.FloatTensor(values).requires_grad_(True)
+    Qvals = torch.FloatTensor(Qvals).requires_grad_(True)
+    log_probs = torch.stack(log_probs).requires_grad_(True)
     advantage = Qvals - values
 
-    actor_loss = [-log_prob * adv for (log_prob, adv) in zip(log_probs, advantage)]
+    # actor_loss = [-log_prob * adv for (log_prob, adv) in zip(log_probs, advantage)]
+    actor_loss = (-log_probs * advantage).mean().requires_grad_(True)
     # critic_loss = torch.tensor([F.smooth_l1_loss(torch.tensor([value]), torch.tensor([Qval])) for (value, Qval) in zip(values, Qvals)])
-    critic_loss = 0.5 * advantage.pow(2).mean()
+    critic_loss = 0.5 * advantage.pow(2).mean().requires_grad_(True)
 
     policy_network.actor_optimizer.zero_grad()
     policy_network.critic_optimizer.zero_grad()
-    actor_loss = torch.stack(actor_loss).sum().requires_grad_(True)
+    # actor_loss = torch.stack(actor_loss).sum().requires_grad_(True)
+    # actor_loss = requires_grad_(True)
     actor_loss = actor_loss.cuda()
-    critic_loss = critic_loss.sum().requires_grad_(True)
+    # critic_loss = critic_loss.sum().requires_grad_(True)
     critic_loss = critic_loss.cuda()
-    if epoch_idx % 2 == 0:
+    if flag:
         actor_loss.backward(retain_graph=True)
         policy_network.actor_optimizer.step()
     else:
@@ -521,7 +523,7 @@ def update_policy(policy_network, rewards, log_probs, values, Qval, entropy_term
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
     # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"
-    run_name = f"{model.window_size} window 50 ratings, near windows calc fixed"
+    run_name = f"window={model.window_size}, 50 ratings, actor-critic split"
     not_finished_count = 0
     run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
     config = wandb.config
@@ -558,7 +560,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
     total_count = -5
-    # total_count = 0
+    count_actor = 0
+    count_critic = 0
+
     global num_epochs_trained
     for epoch in range(num_epochs):
         if num_epochs_trained is None:
@@ -591,8 +595,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     total_count = 0
                     turn_flag = 1 - turn_flag
 
-                if total_count == switch_flag:
+                if total_count >= switch_flag:
                     turn_flag = 1 - turn_flag
+
                 if in_round_count >= bs:
                     break
                 total_count += 1
@@ -644,6 +649,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         value = value_rating
                     else:
                         value = value_reward
+
                     value = value.detach().cpu().numpy()[0]
                     values.append(value)
                     entropy_term += entropy
@@ -801,10 +807,21 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     send_rewards = ratings
                 else:
                     send_rewards = real_rewards
-                if total_count % bs == 0:
-                    update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, epoch, flag=True)
+
+                actor_flag = False
+                if num_epochs_trained <= 6:
+                    if count_actor < 50:
+                        actor_flag = True
+                        count_actor += 1
+                    elif count_critic < 50:
+                        count_critic += 1
+                    else:
+                        count_actor = 0
+                        count_critic = 0
                 else:
-                    update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, epoch)
+                    actor_flag = True
+
+                update_policy(model, send_rewards, log_probs, values, Qval, entropy_term, epoch, flag=actor_flag)
 
 
                 index_max = np.argmax(rewards)
@@ -829,7 +846,13 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         )
                     )
                     if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
-                        wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max], "max rating": np.max(ratings)})
+                        wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                "max rating": np.max(ratings), "actor_flag": int(actor_flag)})
+
+                    if total_steps_trained > 5000:
+                        # Only for sweeps!
+                        return None, None
+
 
                     str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
                      comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
@@ -852,7 +875,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     break
 
             config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
-
             rating_groups = [
                 np.mean(rating_plot[t : t + GRAPH_VALUE])
                 for t in range(0, len(rating_plot), GRAPH_VALUE)
@@ -1153,7 +1175,7 @@ def main(parser):
     first = True
     suggested_models = []
     all_patterns = []
-    split_factor = 60
+    split_factor = args.split_factor
     # for split_factor in range(60, 80, 10):
     for window_size in [args.window_size]:
         eff_split_factor = split_factor / 100
@@ -1184,7 +1206,6 @@ def main(parser):
             print(patterns)
             results.update({split_factor: result})
             suggested_models.append({split_factor: class_inst})
-            exit()
 
     if 0:
         print(results)
@@ -1206,22 +1227,28 @@ def main(parser):
 
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=800, type=int, help='batch size')
     parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=5e-6, type=float, help='starting learning rate')
+    parser.add_argument('--lr', default=1e-6, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--max_fine_app', default=40, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=50, type=int, help='maximum time for pattern (seconds)')
     parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
-    parser.add_argument('--num_events', default=41,type=int, help='number of unique events in data')
-    parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
-    parser.add_argument('--events_path', default='Football/events', help='path to list of events')
-    parser.add_argument('--pattern_path', default='Patterns/pattern16.csv', help='path to known patterns')
+    parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
+    parser.add_argument('--split_factor', default=0.6, type=float, help='split how much train to rating and how much for reward')
+    # parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
+    parser.add_argument('--data_path', default='StarPilot/GamesExp/', help='path to data log')
+
+    # parser.add_argument('--events_path', default='Football/events', help='path to list of events')
+    parser.add_argument('--events_path', default='StarPilot/EventsExp', help='path to list of events')
+
+
+    # parser.add_argument('--pattern_path', default='Patterns/pattern16.csv', help='path to known patterns')
+    parser.add_argument('--pattern_path', default='Patterns/pattern28_50_ratings.csv', help='path to known patterns')
     parser.add_argument('--final_data_path', default='store_folder/xaa', help='path to next level data')
     # parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
     # parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
