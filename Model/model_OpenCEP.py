@@ -355,19 +355,7 @@ class ruleMiningClass(nn.Module):
 
     def forward(self, input, old_desicions, mask, training_factor=0.0, T=1):
         after_relu, event_after_softmax = self.actor_critic.forward_actor(input, old_desicions, mask, training_factor, T)
-        value_reward, value_rating = self.actor_critic.forward_critic(after_relu)
-        # x1 = self.dropout(self.linear_base(input.cuda())).cuda()
-        # x2 = self.spread_patterns(old_desicions.cuda()).cuda()
-        # if np.random.rand() <= 1 - training_factor:
-        #     x1 *= 0.1
-        #     x2 *= 5.5
-        # combined = torch.cat((x1, x2)).cuda()
-        # after_relu = F.leaky_relu(self.linear_finish(combined))
-        #
-        # value_reward = self.critic_reward(after_relu)
-        # value_rating = self.critic_rating(after_relu)
-        # event_before_softmax = self.event_tagger(after_relu)
-        # event_after_softmax = masked_softmax(event_before_softmax, mask.clone(), dim=0, T=T)
+        value_reward, value_rating = self.actor_critic.forward_critic(input, old_desicions,  mask, training_factor, T)
         return event_after_softmax, value_reward, value_rating
 
     def get_event(self, input, old_desicions, index=0, mask=None, training_factor=0.0, T=1):
@@ -434,7 +422,7 @@ class ruleMiningClass(nn.Module):
         comps_to = []
 
         after_relu, _ = self.actor_critic.forward_actor(data, old_desicions.cuda(), None, training_factor)
-        value_reward, value_rating = self.actor_critic.forward_critic(after_relu)
+        value_reward, value_rating = self.actor_critic.forward_critic(data, old_desicions.cuda(), None, training_factor)
         for i in range(self.num_cols):
             action, value, log, entropy = self.single_col_mini_action(after_relu, i, training_factor) #this is weird, should update data after actions
             mini_actions_vals.append(action)
@@ -849,7 +837,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                 "max rating": np.max(ratings), "actor_flag": int(actor_flag)})
 
-                    if total_steps_trained > 5000:
+                    if total_steps_trained > 4500:
                         # Only for sweeps!
                         return None, None
 
@@ -1124,41 +1112,6 @@ def is_pareto_efficient(costs):
     return is_efficient
 
 
-# def bayesian_hidden_size_search(hidden_size):
-#     hidden_size = int(hidden_size)
-#     global class_inst
-#     train_inst = deepcopy(class_inst)
-#     train_inst.layers_based_hidden(hidden_size)
-#     return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
-#
-#
-# def bayesian_lr_search(lr):
-#     global class_inst
-#     train_inst = deepcopy(class_inst)
-#     train_inst.lr = lr
-#     train_inst.optimizer = torch.optim.Adam(train_inst.parameters(), lr=lr)
-#     print(train_inst.parameters())
-#     return train(train_inst, num_epochs=5,  bs=200 , split_factor=50/100)
-#
-#
-# def bayesian_hidden2_size_search(hidden_size):
-#     hidden_size = int(hidden_size)
-#     global class_inst
-#     train_inst = deepcopy(class_inst)
-#     train_inst.hidden_size2 = hidden_size
-#     train_inst.layers_based_hidden2(hidden_size)
-#     return train(train_inst, num_epochs=5,  bs=200 , split_factor=49/100)
-#
-#
-# def bayesian_hidden_search(hidden_size1, hidden_size2):
-#     global class_inst
-#     train_inst = deepcopy(class_inst)
-#     hidden_size1 = int(hidden_size1)
-#     hidden_size2 = int(hidden_size2)
-#     train_inst.layers_hidden(hidden_size1, hidden_size2)
-#     return train(train_inst, num_epochs=5,  bs=200 , split_factor=50/100)
-#
-#
 def main(parser):
     args = parser.parse_args()
     max_vals = [int(i) for i in args.max_vals.split(",")]
@@ -1176,7 +1129,6 @@ def main(parser):
     suggested_models = []
     all_patterns = []
     split_factor = args.split_factor
-    # for split_factor in range(60, 80, 10):
     for window_size in [args.window_size]:
         eff_split_factor = split_factor / 100
         global class_inst
@@ -1231,15 +1183,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=800, type=int, help='batch size')
     parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
-    parser.add_argument('--lr', default=1e-6, type=float, help='starting learning rate')
+    parser.add_argument('--lr', default=2e-4, type=float, help='starting learning rate')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--max_fine_app', default=40, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=50, type=int, help='maximum time for pattern (seconds)')
-    parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
+    parser.add_argument('--window_size', default=485, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
-    parser.add_argument('--split_factor', default=0.6, type=float, help='split how much train to rating and how much for reward')
+    parser.add_argument('--split_factor', default=0.2, type=float, help='split how much train to rating and how much for reward')
     # parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
     parser.add_argument('--data_path', default='StarPilot/GamesExp/', help='path to data log')
 

@@ -57,26 +57,11 @@ from bayes_opt import BayesianOptimization
 import json
 from torch.optim.lr_scheduler import StepLR
 
-class Critic(nn.Module):
-    def __init__(self, hidden_size1, hidden_size2):
-        super(Critic, self).__init__()
-        self.hidden_size1 = hidden_size1
-        self.hidden_size2 = hidden_size2
-
-        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
-        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
-
-
-    def forward(self, actor_output):
-        value_reward = self.critic_reward(actor_output)
-        value_rating = self.critic_rating(actor_output)
-        return value_reward, value_rating
-
-class Actor(nn.Module):
+class ModelBase(nn.Module):
     def __init__(self, hidden_size1, hidden_size2,
                 embeddding_total_size, window_size, match_max_size,
                 num_cols, num_actions, num_events):
-        super(Actor, self).__init__()
+        super(ModelBase, self).__init__()
         self.hidden_size1 = hidden_size1
         self.hidden_size2 = hidden_size2
         self.embeddding_total_size = embeddding_total_size
@@ -85,7 +70,6 @@ class Actor(nn.Module):
         self.num_cols = num_cols
         self.num_actions = num_actions
         self.num_events = num_events
-
         self.linear_base = nn.Linear(
             self.window_size * self.embeddding_total_size,
             self.hidden_size1,
@@ -99,6 +83,45 @@ class Actor(nn.Module):
             2 * self.hidden_size1,
             self.hidden_size2,
         ).cuda()
+
+    def forward_base(self, input, old_desicions, mask, training_factor, T):
+        x1 = self.dropout(self.linear_base(input.cuda())).cuda()
+        x2 = self.spread_patterns(old_desicions.cuda()).cuda()
+        if np.random.rand() <= 1 - training_factor:
+            x1 *= 0.1
+            x2 *= 5.5
+        combined = torch.cat((x1, x2)).cuda()
+        after_relu = F.leaky_relu(self.linear_finish(combined))
+        return after_relu
+
+
+class Critic(ModelBase):
+    def __init__(self, hidden_size1, hidden_size2,
+                embeddding_total_size, window_size, match_max_size,
+                num_cols, num_actions, num_events):
+        super().__init__(hidden_size1, hidden_size2,
+                    embeddding_total_size, window_size, match_max_size,
+                    num_cols, num_actions, num_events)
+
+        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
+
+
+    def forward(self, input, old_desicions, mask, training_factor, T):
+        base_output = self.forward_base(input, old_desicions, mask, training_factor, T)
+        value_reward = self.critic_reward(base_output)
+        value_rating = self.critic_rating(base_output)
+        return value_reward, value_rating
+
+class Actor(ModelBase):
+    def __init__(self, hidden_size1, hidden_size2,
+                embeddding_total_size, window_size, match_max_size,
+                num_cols, num_actions, num_events):
+        super().__init__(hidden_size1, hidden_size2,
+                    embeddding_total_size, window_size, match_max_size,
+                    num_cols, num_actions, num_events)
+
+
         self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
 
         self.action_layers = nn.ModuleList(
@@ -120,19 +143,14 @@ class Actor(nn.Module):
             masked_sums += zeros.float()
             return masked_exps / masked_sums
 
-        x1 = self.dropout(self.linear_base(input.cuda())).cuda()
-        x2 = self.spread_patterns(old_desicions.cuda()).cuda()
-        if np.random.rand() <= 1 - training_factor:
-            x1 *= 0.1
-            x2 *= 5.5
-        combined = torch.cat((x1, x2)).cuda()
-        after_relu = F.leaky_relu(self.linear_finish(combined))
-        event_before_softmax = self.event_tagger(after_relu)
+        base_output = self.forward_base(input, old_desicions, mask, training_factor, T)
+        event_before_softmax = self.event_tagger(base_output)
+
         if mask is None:
             event_after_softmax = event_before_softmax
         else:
             event_after_softmax = masked_softmax(event_before_softmax, mask.clone(), dim=0, T=T)
-        return after_relu, event_after_softmax
+        return base_output, event_after_softmax
 
     def forward_mini_actions(self, index, data, mask, training_factor, T=1):
         def masked_softmax(vec, mask, dim=0, T=1):
@@ -203,69 +221,22 @@ class ActorCriticModel(nn.Module):
         )
 
     def _create_critic(self):
-        return Critic(hidden_size1=self.hidden_size1, hidden_size2=self.hidden_size2)
+        return Critic(
+            hidden_size1=self.hidden_size1,
+            hidden_size2=self.hidden_size2,
+            embeddding_total_size=self.embeddding_total_size,
+            window_size=self.window_size,
+            match_max_size=self.match_max_size,
+            num_cols=self.num_cols,
+            num_actions=self.num_actions,
+            num_events=self.num_events
+        )
 
     def forward_actor(self, input, old_desicions, mask=None, training_factor=0.0, T=1):
         return self.actor.forward(input, old_desicions, mask, training_factor, T)
 
-    def forward_critic(self, actor_output):
-        return self.critic.forward(actor_output)
+    def forward_critic(self, input, old_desicions, mask=None, training_factor=0.0, T=1):
+        return self.critic.forward(input, old_desicions, mask, training_factor, T)
 
     def forward_actor_mini_actions(self, index, data, mask, training_factor):
         return self.actor.forward_mini_actions(index, data, mask, training_factor)
-
-    #
-    #
-    # def layers_based_hidden(self, hidden_size):
-    #     self.hidden_size1 = hidden_size
-    #     self.linear_base = nn.Linear(
-    #         self.window_size * self.embeddding_total_size,
-    #         self.hidden_size1,
-    #     ).cuda()
-    #     self.linear_finish = nn.Linear(
-    #         self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
-    #         self.hidden_size2,
-    #     ).cuda()
-    #
-    # def layers_based_hidden2(self, hidden_size):
-    #     self.linear_finish = nn.Linear(
-    #         self.hidden_size1 + (self.match_max_size + 1) * (self.num_cols + 1),
-    #         self.hidden_size2,
-    #     ).cuda()
-    #     self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
-    #
-    #     self.action_layers = nn.ModuleList(
-    #         [
-    #             nn.Linear(self.hidden_size2, self.num_actions)
-    #             for _ in range(self.num_cols)
-    #         ]
-    #     ).cuda()
-    #     self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
-    #     self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
-    #
-    # def layers_hidden(self, hidden_size1, hidden_size2):
-    #     self.hidden_size1 = hidden_size1
-    #     self.hidden_size2 = hidden_size2
-    #     self.linear_base = nn.Linear(
-    #         self.window_size * self.embeddding_total_size,
-    #         self.hidden_size1,
-    #     ).cuda()
-    #     self.dropout = nn.Dropout(p=0.4).cuda()
-    #     self.spread_patterns = nn.Linear(
-    #         (self.match_max_size + 1) * (self.num_cols + 1),
-    #         self.hidden_size1,
-    #     ).cuda()
-    #     self.linear_finish = nn.Linear(
-    #         2 * self.hidden_size1,
-    #         self.hidden_size2,
-    #     ).cuda()
-    #     self.event_tagger = nn.Linear(self.hidden_size2, self.num_events + 1).cuda()
-    #
-    #     self.action_layers = nn.ModuleList(
-    #         [
-    #             nn.Linear(self.hidden_size2, self.num_actions)
-    #             for _ in range(self.num_cols)
-    #         ]
-    #     ).cuda()
-    #     self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
-    #     self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
