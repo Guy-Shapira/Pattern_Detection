@@ -132,16 +132,25 @@ class Actor(ModelBase):
         ).cuda()
 
     def forward(self, input, old_desicions, mask, training_factor, T):
-        def masked_softmax(vec, mask, dim=1, T=1):
+        def masked_softmax(vec, mask, dim=1, T=1, epsilon=1e-5):
             vec = vec / T
-            masked_vec = vec.cpu() * mask.float()
-            max_vec = torch.max(masked_vec, dim=dim, keepdim=True)[0]
-            exps = torch.exp(masked_vec - max_vec).cpu()
+            exps = torch.exp(vec).cpu()
             masked_exps = exps * mask.float()
-            masked_sums = masked_exps.sum(dim, keepdim=True)
-            zeros = masked_sums == 0
-            masked_sums += zeros.float()
-            return masked_exps / masked_sums
+            masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
+            check_sums = masked_sums.cpu().detach().numpy()
+            check_exps = masked_exps.cpu().detach().numpy()
+            try:
+                check_toghter = check_exps/check_sums
+            except Exception as e:
+                print("anomaly- extreamly large value!")
+                #TODO: raise a unique error- to end training!
+                base_array = torch.zeros_like(masked_exps).to(masked_exps.device)
+                max_index = torch.argmax(masked_exps).item()
+                base_array[max_index] = 1.0
+                return base_array
+                
+            return (masked_exps/masked_sums)
+
 
         base_output = self.forward_base(input, old_desicions, mask, training_factor, T)
         event_before_softmax = self.event_tagger(base_output)
