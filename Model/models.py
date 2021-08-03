@@ -22,6 +22,7 @@ from Model.utils import (
     run_OpenCEP,
     check_predictor,
     calc_near_windows,
+    OverFlowError,
 )
 
 from Model.rating_module import (
@@ -32,7 +33,6 @@ from Model.rating_module import (
 
 import tqdm
 import pathlib
-from bayes_opt import BayesianOptimization
 import ast
 import sys
 import time
@@ -53,7 +53,6 @@ import pandas as pd
 from stream.FileStream import FileInputStream, FileOutputStream
 from sklearn.neighbors import KNeighborsClassifier as KNN
 import wandb
-from bayes_opt import BayesianOptimization
 import json
 from torch.optim.lr_scheduler import StepLR
 
@@ -95,20 +94,16 @@ class ModelBase(nn.Module):
         return after_relu
 
 
-class Critic(ModelBase):
-    def __init__(self, hidden_size1, hidden_size2,
-                embeddding_total_size, window_size, match_max_size,
-                num_cols, num_actions, num_events):
-        super().__init__(hidden_size1, hidden_size2,
-                    embeddding_total_size, window_size, match_max_size,
-                    num_cols, num_actions, num_events)
+class Critic(nn.Module):
+    def __init__(self, hidden_size2):
+        super(Critic, self).__init__()
+        self.hidden_size = hidden_size2
 
-        self.critic_reward = nn.Linear(self.hidden_size2, 1).cuda()
-        self.critic_rating = nn.Linear(self.hidden_size2, 1).cuda()
+        self.critic_reward = nn.Linear(self.hidden_size, 1).cuda()
+        self.critic_rating = nn.Linear(self.hidden_size, 1).cuda()
 
 
-    def forward(self, input, old_desicions, mask, training_factor, T):
-        base_output = self.forward_base(input, old_desicions, mask, training_factor, T)
+    def forward(self, input, old_desicions, base_output,  mask, training_factor, T):
         value_reward = self.critic_reward(base_output)
         value_rating = self.critic_rating(base_output)
         return value_reward, value_rating
@@ -134,7 +129,8 @@ class Actor(ModelBase):
     def forward(self, input, old_desicions, mask, training_factor, T):
         def masked_softmax(vec, mask, dim=1, T=1, epsilon=1e-5):
             vec = vec / T
-            exps = torch.exp(vec).cpu()
+            normalized_vec = vec - torch.max(vec)
+            exps = torch.exp(normalized_vec).cpu()
             masked_exps = exps * mask.float()
             masked_sums = masked_exps.sum(dim, keepdim=True) + epsilon
             check_sums = masked_sums.cpu().detach().numpy()
@@ -143,11 +139,12 @@ class Actor(ModelBase):
                 check_toghter = check_exps/check_sums
             except Exception as e:
                 print("anomaly- extreamly large value!")
-                #TODO: raise a unique error- to end training!
-                base_array = torch.zeros_like(masked_exps).to(masked_exps.device)
-                max_index = torch.argmax(masked_exps).item()
-                base_array[max_index] = 1.0
-                return base_array
+                #TODO: raise a unique error- to end training! - Done
+                raise OverFlowError(vec, mask, T)
+                # base_array = torch.zeros_like(masked_exps).to(masked_exps.device)
+                # max_index = torch.argmax(masked_exps).item()
+                # base_array[max_index] = 1.0
+                # return base_array
                 
             return (masked_exps/masked_sums)
 
@@ -231,21 +228,14 @@ class ActorCriticModel(nn.Module):
 
     def _create_critic(self):
         return Critic(
-            hidden_size1=self.hidden_size1,
             hidden_size2=self.hidden_size2,
-            embeddding_total_size=self.embeddding_total_size,
-            window_size=self.window_size,
-            match_max_size=self.match_max_size,
-            num_cols=self.num_cols,
-            num_actions=self.num_actions,
-            num_events=self.num_events
         )
 
     def forward_actor(self, input, old_desicions, mask=None, training_factor=0.0, T=1):
         return self.actor.forward(input, old_desicions, mask, training_factor, T)
 
-    def forward_critic(self, input, old_desicions, mask=None, training_factor=0.0, T=1):
-        return self.critic.forward(input, old_desicions, mask, training_factor, T)
+    def forward_critic(self, input, old_desicions, base_output, mask=None, training_factor=0.0, T=1):
+        return self.critic.forward(input, old_desicions, base_output, mask, training_factor, T)
 
     def forward_actor_mini_actions(self, index, data, mask, training_factor):
         return self.actor.forward_mini_actions(index, data, mask, training_factor)

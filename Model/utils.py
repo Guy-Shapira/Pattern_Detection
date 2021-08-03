@@ -732,3 +732,19 @@ def check_predictor(model):
         print(rating)
 
         print("---------")
+
+
+class OverFlowError(Exception):
+    """Exception raised for overflow in softmax calculation .
+
+    Attributes:
+        vec - vector to calculate softmax on
+        msak - mask given to softmax calc
+        T - temperature given to softmax calc
+    """
+
+    def __init__(self, vec, mask, T):
+        self.vec = vec
+        self.mask = mask
+        self.T = T
+        super().__init__(f"Overflow! recived vec is : {vec} \n mask: {self.mask}, T : {self.T}")
