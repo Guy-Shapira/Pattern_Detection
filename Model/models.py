@@ -83,10 +83,10 @@ class ModelBase(nn.Module):
             self.hidden_size2,
         ).cuda()
 
-    def forward_base(self, input, old_desicions, mask, training_factor, T):
+    def forward_base(self, input, old_desicions, training_factor):
         x1 = self.dropout(self.linear_base(input.cuda())).cuda()
         x2 = self.spread_patterns(old_desicions.cuda()).cuda()
-        if np.random.rand() <= 1 - training_factor:
+        if np.random.rand() > 1 - training_factor:
             x1 *= 0.1
             x2 *= 5.5
         combined = torch.cat((x1, x2)).cuda()
@@ -103,7 +103,7 @@ class Critic(nn.Module):
         self.critic_rating = nn.Linear(self.hidden_size, 1).cuda()
 
 
-    def forward(self, input, old_desicions, base_output,  mask, training_factor, T):
+    def forward(self, base_output):
         value_reward = self.critic_reward(base_output)
         value_rating = self.critic_rating(base_output)
         return value_reward, value_rating
@@ -126,7 +126,7 @@ class Actor(ModelBase):
             ]
         ).cuda()
 
-    def forward(self, input, old_desicions, mask, training_factor, T):
+    def forward(self, input, old_desicions, softmax_flag, training_factor):
         def masked_softmax(vec, mask, dim=1, T=1, epsilon=1e-5):
             vec = vec / T
             normalized_vec = vec - torch.max(vec)
@@ -138,6 +138,7 @@ class Actor(ModelBase):
             try:
                 check_toghter = check_exps/check_sums
             except Exception as e:
+                print(e)
                 print("anomaly- extreamly large value!")
                 #TODO: raise a unique error- to end training! - Done
                 raise OverFlowError(vec, mask, T)
@@ -149,16 +150,19 @@ class Actor(ModelBase):
             return (masked_exps/masked_sums)
 
 
-        base_output = self.forward_base(input, old_desicions, mask, training_factor, T)
+        base_output = self.forward_base(input, old_desicions, training_factor)
         event_before_softmax = self.event_tagger(base_output)
 
-        if mask is None:
-            event_after_softmax = event_before_softmax
+        if not softmax_flag:
+            return base_output, None
+            # event_after_softmax = event_before_softmax
         else:
-            event_after_softmax = masked_softmax(event_before_softmax, mask.clone(), dim=0, T=T)
-        return base_output, event_after_softmax
+            # event_after_softmax = masked_softmax(event_before_softmax, mask.clone(), dim=0, T=T)
+            m = nn.Softmax(dim=0).to(event_before_softmax.device)
+            event_after_softmax = m(event_before_softmax)
+            return base_output, event_after_softmax
 
-    def forward_mini_actions(self, index, data, mask, training_factor, T=1):
+    def forward_mini_actions(self, index, data, training_factor):
         def masked_softmax(vec, mask, dim=0, T=1):
             vec = vec / T
             masked_vec = vec.cpu() * mask.float()
@@ -171,7 +175,9 @@ class Actor(ModelBase):
             return masked_exps / masked_sums
 
         x = F.leaky_relu(self.action_layers[index](data))
-        probs = masked_softmax(x, mask, dim=0)
+        m = nn.Softmax(dim=0).to(x.device)
+        # probs = masked_softmax(x, mask, dim=0)
+        probs = m(x)
         numpy_probs = probs.detach().cpu().numpy()
 
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
@@ -231,11 +237,11 @@ class ActorCriticModel(nn.Module):
             hidden_size2=self.hidden_size2,
         )
 
-    def forward_actor(self, input, old_desicions, mask=None, training_factor=0.0, T=1):
-        return self.actor.forward(input, old_desicions, mask, training_factor, T)
+    def forward_actor(self, input, old_desicions, softmax_flag=True, training_factor=0.0):
+        return self.actor.forward(input, old_desicions, softmax_flag, training_factor)
 
-    def forward_critic(self, input, old_desicions, base_output, mask=None, training_factor=0.0, T=1):
-        return self.critic.forward(input, old_desicions, base_output, mask, training_factor, T)
+    def forward_critic(self, base_output):
+        return self.critic.forward(base_output)
 
-    def forward_actor_mini_actions(self, index, data, mask, training_factor):
-        return self.actor.forward_mini_actions(index, data, mask, training_factor)
+    def forward_actor_mini_actions(self, index, data, training_factor):
+        return self.actor.forward_mini_actions(index, data, training_factor)

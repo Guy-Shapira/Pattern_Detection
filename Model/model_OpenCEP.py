@@ -362,15 +362,15 @@ with torch.autograd.detect_anomaly():
             else:
                 raise Exception("Data set not supported")
 
-        def forward(self, input, old_desicions, mask, training_factor=0.0, T=1):
-            base_value, event_after_softmax = self.actor_critic.forward_actor(input, old_desicions, mask, training_factor, T)
-            value_reward, value_rating = self.actor_critic.forward_critic(input, old_desicions, base_value, mask, training_factor, T)
+        def forward(self, input, old_desicions, training_factor=0.0):
+            base_value, event_after_softmax = self.actor_critic.forward_actor(input, old_desicions, training_factor=training_factor)
+            value_reward, value_rating = self.actor_critic.forward_critic(base_value)
             return event_after_softmax, value_reward, value_rating
 
-        def get_event(self, input, old_desicions, index=0, mask=None, training_factor=0.0, T=1):
+        def get_event(self, input, old_desicions, index=0, training_factor=0.0):
             global total_steps_trained
             total_steps_trained += 1
-            probs, value_reward, value_rating = self.forward(Variable(input), Variable(old_desicions), mask, training_factor=training_factor, T=T)
+            probs, value_reward, value_rating = self.forward(Variable(input), Variable(old_desicions), training_factor=training_factor)
             numpy_probs = probs.detach().cpu().numpy()
             action = None
             numpy_probs = np.squeeze(numpy_probs).astype(float)
@@ -383,6 +383,7 @@ with torch.autograd.detect_anomaly():
                 action = np.random.multinomial(
                     n=1, pvals=numpy_probs, size=1
                 )
+                num_actions = len(numpy_probs)
                 action = np.argmax(action)
             except Exception as e:
                 print(e)
@@ -394,7 +395,7 @@ with torch.autograd.detect_anomaly():
                 exit(0)
             entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
             if np.random.rand() > 1 - training_factor:
-                action = np.random.randint(len(mask))
+                action = np.random.randint(num_actions)
             if index % 50 == 0:
                 print(probs)
 
@@ -422,12 +423,12 @@ with torch.autograd.detect_anomaly():
             #     )
             # log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
             # highest_prob_value = None\
-            mask = [1.0] * self.num_actions
-            mask[-1] = 20
-            mask = torch.tensor([float(i)/sum(mask) for i in mask])
+            # mask = [1.0] * self.num_actions
+            # mask[-1] = 20
+            # mask = torch.tensor([float(i)/sum(mask) for i in mask])
             highest_prob_value = None
             highest_prob_action, log_prob, entropy = self.actor_critic.forward_actor_mini_actions(
-                index, data, mask, training_factor
+                index, data, training_factor
             )
             mini_action, _, _ = get_action_type(
                 highest_prob_action, self.num_actions, self.actions, self.match_max_size
@@ -447,8 +448,8 @@ with torch.autograd.detect_anomaly():
             total_entropy = 0
             comps_to = []
 
-            base_value, _ = self.actor_critic.forward_actor(data, old_desicions.cuda(), None, training_factor)
-            value_reward, value_rating = self.actor_critic.forward_critic(data, old_desicions.cuda(), base_value, None, training_factor)
+            base_value, _ = self.actor_critic.forward_actor(data, old_desicions.cuda(), False, training_factor)
+            value_reward, value_rating = self.actor_critic.forward_critic(base_value)
             for i in range(self.num_cols):
                 action, value, log, entropy = self.single_col_mini_action(base_value, i, training_factor) #this is weird, should update data after actions
                 mini_actions_vals.append(action)
@@ -552,34 +553,37 @@ with torch.autograd.detect_anomaly():
         Qvals = torch.FloatTensor((Qvals_reward, Qvals_rating)).requires_grad_(True)
         log_probs = torch.stack(log_probs).requires_grad_(True)
         advantage = Qvals - values
+        advantage = advantage.to(log_probs.device)
         log_probs_reg = l1_penalty(log_probs, l1_lambda=0.05)
 
         actor_loss = (-log_probs * advantage).mean().requires_grad_(True)
-        print("----------\n")
-        print(actor_loss, log_probs_reg)
-        print("----------\n")
 
         actor_loss += log_probs_reg
         critic_loss = 0.5 * advantage.pow(2).mean().requires_grad_(True)
         policy_network.actor_optimizer.zero_grad()
         policy_network.critic_optimizer.zero_grad()
-        actor_loss_1 = actor_loss.detach().numpy()
+        actor_loss_1 = actor_loss.cpu().detach().numpy()
         actor_loss = actor_loss.cuda()
-        critic_loss_1 = critic_loss.detach().numpy()
+        critic_loss_1 = critic_loss.cpu().detach().numpy()
         critic_loss = critic_loss.cuda()
+        # ac_loss = actor_loss + critic_loss + 0.001 * entropy_term
 
         # if epoch_idx == 0:
         # if True:
+        #     ac_loss.backward(retain_graph=True)
+        #     policy_network.actor_optimizer.step()
+        #     policy_network.critic_optimizer.step()
+            
         if False:
             actor_loss.backward(retain_graph=True)
             policy_network.actor_optimizer.step()
             critic_loss.backward(retain_graph=True)
             policy_network.critic_optimizer.step()
         elif flag:
-            actor_loss.backward(retain_graph=True)
+            actor_loss.backward()
             policy_network.actor_optimizer.step()
         else:
-            critic_loss.backward(retain_graph=True)
+            critic_loss.backward()
             policy_network.critic_optimizer.step()
 
         return actor_loss_1, critic_loss_1
@@ -587,7 +591,7 @@ with torch.autograd.detect_anomaly():
     def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
         # run_name = "second_level_setup_all_lr" + str(model.lr)
         # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"
-        run_name = f"bigger actor-critic phases"
+        run_name = f"removed masks"
         not_finished_count = 0
         run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
@@ -621,7 +625,8 @@ with torch.autograd.detect_anomaly():
         )
         max_rating = []
         entropy_term, turn_flag = 0, 0
-        training_factor = 0.8
+        # training_factor = 0.8
+        training_factor = 0.0
         switch_flag = int(split_factor * bs)
         pbar_file = sys.stdout
         total_count = -5
@@ -643,8 +648,8 @@ with torch.autograd.detect_anomaly():
             #         g1['lr'] *= 0.90
             #         g2['lr'] *= 0.90
 
-            if epoch < 2:
-                temper = 0.5
+            # if epoch < 2:
+            #     temper = 0.5
             # elif epoch < 4:
             #     temper = 1
             # else:
@@ -695,7 +700,7 @@ with torch.autograd.detect_anomaly():
                         [],
                     )
                     normalize_rating, normalize_reward = [], []
-                    mask = torch.tensor([1.0] * (model.num_events + 1))
+                    # mask = torch.tensor([1.0] * (model.num_events + 1))
                     # if in_round_count % 35 == 0 and epoch < 5:
                     #     temper /= 1.05
                     if total_count % 250 == 0 and training_factor > 0.3:
@@ -705,9 +710,9 @@ with torch.autograd.detect_anomaly():
                             data = set_data.clone().detach().requires_grad_(True)
                             set_data = None
                         data = data.cuda()
-                        mask_orig = mask.clone()
+                        # mask_orig = mask.clone()
                         action, log_prob, value_reward, value_rating, entropy = model.get_event(
-                            data, old_desicions, in_round_count, mask, training_factor=training_factor, T=temper
+                            data, old_desicions, in_round_count, training_factor=training_factor
                         )
                         old_desicions = old_desicions.clone()
                         old_desicions[count * (model.num_cols + 1)] = model.embedding_desicions(
@@ -739,8 +744,8 @@ with torch.autograd.detect_anomaly():
                                 real_rewards.append(10)
                                 break
                         else:
-                            mask[-1] *= 1.1
-                            mask[action] *= 1.25
+                            # mask[-1] *= 1.1
+                            # mask[action] *= 1.25
                             event = new_mapping(action, model.events)
                             events.append(event)
                             mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to, value_reward, value_rating = \
@@ -869,7 +874,8 @@ with torch.autograd.detect_anomaly():
                         if count >= model.match_max_size:
                             is_done = True
 
-                    _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), mask, training_factor=training_factor, T=temper)
+                    # _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), mask, training_factor=training_factor, T=temper)
+                    _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), training_factor=training_factor)
                     # if turn_flag == 0:
 
                     #     Qval = Qval_rating.detach().cpu().numpy()[0]
