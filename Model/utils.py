@@ -17,7 +17,8 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 
 # from plugin.Football.Football_processed import DataFormatter
-from plugin.StarPilot.StarPilot_processed import DataFormatter
+# from plugin.StarPilot.StarPilot_processed import DataFormatter
+from plugin.GPU.GPU_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
 
@@ -374,7 +375,7 @@ def new_mapping(event, events, reverse=False):
         # print(np.where(events == int(event))[0])
         # print(np.where(events == int(event))[0][0])
         # return (np.where(events == int(event))[0][0]) # Football
-        return (np.where(events == event)[0][0])  # StarPilot
+        return (np.where(events == event)[0][0])  # StarPilot & GPU
     else:
         return events[event]
 
@@ -517,7 +518,7 @@ def replace_values(comp_vals, selected_values):
     new_comp_vals = []
     for val in comp_vals:
         if not val == "nop":
-            new_comp_vals.append(selected_values[count])
+            new_comp_vals.append(selected_values[count] / 100)
             count += 1
         else:
             new_comp_vals.append("nop")
