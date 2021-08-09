@@ -17,8 +17,8 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 
 # from plugin.Football.Football_processed import DataFormatter
-# from plugin.StarPilot.StarPilot_processed import DataFormatter
-from plugin.GPU.GPU_processed import DataFormatter
+from plugin.StarPilot.StarPilot_processed import DataFormatter
+# from plugin.GPU.GPU_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
 
@@ -268,7 +268,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
-@timeout_decorator.timeout(50)
+@timeout_decorator.timeout(40)
 def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
@@ -308,7 +308,6 @@ def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_M
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
-
 
 def run_OpenCEP(
     test_name,
@@ -375,7 +374,8 @@ def new_mapping(event, events, reverse=False):
         # print(np.where(events == int(event))[0])
         # print(np.where(events == int(event))[0][0])
         # return (np.where(events == int(event))[0][0]) # Football
-        return (np.where(events == event)[0][0])  # StarPilot & GPU
+        return (np.where(np.array(events) == event)[0][0])  # StarPilot & GPU
+
     else:
         return events[event]
 
@@ -518,7 +518,8 @@ def replace_values(comp_vals, selected_values):
     new_comp_vals = []
     for val in comp_vals:
         if not val == "nop":
-            new_comp_vals.append(selected_values[count] / 100)
+            # new_comp_vals.append(selected_values[count] / 100)
+            new_comp_vals.append(selected_values[count])
             count += 1
         else:
             new_comp_vals.append("nop")

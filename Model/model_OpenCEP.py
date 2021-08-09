@@ -133,14 +133,10 @@ with torch.autograd.detect_anomaly():
             # self._create_training_dir(data_path)
             # print("finished training dir creation!")
 
-            # self.critic_optimizer = torch.optim.Adam(self.actor_critic.critic.parameters(), lr=lr_actor)
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
             self.critic_optimizer = torch.optim.SGD(params, lr=lr_critic)
-            # self.actor_optimizer = torch.optim.Adam(self.actor_critic.actor.parameters(), lr=lr_critic)
-            # print(type(self.actor_critic.actor.parameters()))
-            # print(self.actor_critic.actor.parameters() + self.actor_critic.critic.parameters())
-            # exit(0)
+
             self.actor_optimizer = torch.optim.SGD(self.actor_critic.actor.parameters(), lr=lr_actor)
             self.all_cols = all_cols
             self.cols = eff_cols
@@ -175,11 +171,9 @@ with torch.autograd.detect_anomaly():
             self.list_of_dfs = []
             df = pd.read_csv(pattern_path)[["rating", "events", "conds", "actions"]]
             df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 49))
-            # print(os.path.exists(f"Processed_knn/{self.pattern_path}"))
             if not os.path.exists(f"Processed_knn/{self.pattern_path}"):
                 print("Creating Knn!")
                 os.mkdir(f"Processed_knn/{self.pattern_path}")
-                # str_list_columns = ["conds", "actions"]
                 str_list_columns = ["actions"]
                 int_list_columns = ["events"]
                 fit_columns = int_list_columns + str_list_columns
@@ -234,13 +228,13 @@ with torch.autograd.detect_anomaly():
             self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=1e-4)
             self.pred_sched = StepLR(self.pred_optim, step_size=3000, gamma=0.3)
 
-            if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-            else:
-                test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
-                #TODO: remove!
-                # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=5, max_total_count=50, n=0)
+            # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+            # if False:
+            #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+            #     torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            # else:
+            #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=1, max_total_count=10, n=0)
 
             print(len(test_pred.ratings_col_train))
             self.pred_pattern = test_pred
@@ -252,6 +246,7 @@ with torch.autograd.detect_anomaly():
             date_time_obj = None
             all_data = None
             if self.exp_name == "Football":
+                data = None
                 with open(data_path) as f:
                     for line in f:
                         values = line.split("\n")[0]
@@ -962,6 +957,12 @@ with torch.autograd.detect_anomaly():
                             g2['lr'] *= 0.95
                         # continue
                         break
+                    if epoch < 2 and in_round_count % 25 == 0 and (in_round_count % 100 != 0) and not (in_round_count == 0):
+                        model.pred_pattern.save_all()
+                        model.pred_pattern.train()
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
+                        model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
+
 
                 rating_groups = [
                     np.mean(rating_plot[t : t + GRAPH_VALUE])
@@ -1018,11 +1019,6 @@ with torch.autograd.detect_anomaly():
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-                if epoch < 2:
-                    model.pred_pattern.save_all()
-                    # model.pred_pattern.train()
-                    # model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
-                    # model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
                 if False:
                     after_epoch_test(best_pattern)
                     with open("Data/Matches/allMatches.txt", "r") as f:

@@ -15,8 +15,8 @@ PATTERN_LEN = 40
 MAX_RATING = 50
 random.seed(42)
 np.seterr('raise')
-SPLIT_1 = 39000
-SPLIT_2 = 40000
+SPLIT_1 = 0
+SPLIT_2 = 30000
 SPLIT_3 = 41000
 
 
@@ -41,7 +41,6 @@ class ratingPredictor(nn.Module):
         ratings_col = ratings_col.apply(lambda x: min(x, 49))
         self.rating_df_train = rating_df[:SPLIT_1]
         self.ratings_col_train = ratings_col[:SPLIT_1]
-
         ax = self.ratings_col_train.plot.hist(bins=25, alpha=0.5)
         plt.show()
         plt.savefig(f"look.pdf")
@@ -83,17 +82,8 @@ class ratingPredictor(nn.Module):
         weights[0] = 0.5
         weights[1] = 0.5
         weights[2] = 0.5
-        # weights[4] = 5
-        # weights[-1] = 5
         weights[20:30] = torch.tensor([2] * 10)
         weights[-10:] = torch.tensor([3] * 10)
-
-        # weights[-2] = 15
-        # weights[-3] = 10
-        # weights[-4] = 5
-        # weights[-5] = 5
-        # weights[-6] = 2
-        # weights[-7] = 5
         weights = weights.cuda()
         self.weights = weights
         self.criterion = nn.CrossEntropyLoss(weight=weights)
@@ -107,7 +97,7 @@ class ratingPredictor(nn.Module):
         self.lr = 5e-4
         self.extra_ratings = [[] for _ in range(0, MAX_RATING)]
 
-        self._fix_data_balance(first=True)
+        # self._fix_data_balance(first=True)
         self.count = 0
 
     def label_manually(self, n, weights):
@@ -132,7 +122,10 @@ class ratingPredictor(nn.Module):
             user_ratings = np.array(self.unlabeld_strs)[sampled_indexes]
 
         else:
-            for str_pattern, events in zip(np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes]):
+            for data, str_pattern, events in zip(values, np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes]):
+                _, res = torch.max(self.predict(data.unsqueeze(0)), dim=1)
+                res = res.item() + 1
+                print(f"current prediction: {res}")
                 print(events)
                 print(str_pattern)
                 user_rating = None
@@ -173,7 +166,7 @@ class ratingPredictor(nn.Module):
     def get_prediction(self, data, data_str, events, balance_flag=False):
         if not balance_flag:
             if self.rating_df_unlabeld is None:
-                self.rating_df_unlabeld = torch.tensor(data)
+                self.rating_df_unlabeld = torch.tensor(data.clone().detach())
             else:
                 self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach()
             try:
@@ -196,58 +189,61 @@ class ratingPredictor(nn.Module):
         l1_loss = nn.SmoothL1Loss()
         self.train()
         mistake_histogram = np.zeros(MAX_RATING)
-        # lens_array = np.zeros(MAX_RATING)
         lens_array = np.ones(MAX_RATING)
-        for input_x, target in self.train_loader:
-            optimizer.zero_grad()
-            prediction = self.predict(input_x)
-            _, max_val = torch.max(prediction, dim=1)
-            loss = self.criterion(prediction, target) * self.m_factor
-            new_distance = l1_loss(max_val.float(), target.float()).requires_grad_(True)
-            loss += new_distance * (1 - self.m_factor)
-            distance += new_distance
-            total_loss += loss.item()
-            count_losses += 1
-            correct += torch.sum(max_val == target).item()
+        if not self.train_loader is None and len(self.ratings_col_train) > 1:
+            for input_x, target in self.train_loader:
+                optimizer.zero_grad()
+                prediction = self.predict(input_x)
+                _, max_val = torch.max(prediction, dim=1)
+                loss = self.criterion(prediction, target) * self.m_factor
+                new_distance = l1_loss(max_val.float(), target.float()).requires_grad_(True)
+                loss += new_distance * (1 - self.m_factor)
+                distance += new_distance
+                total_loss += loss.item()
+                count_losses += 1
+                correct += torch.sum(max_val == target).item()
+                if total_count % 25 == 0:
+                    mistakes = (max_val != target).cpu().numpy()
+                    for i, mistake in enumerate(mistakes):
+                        if mistake:
+                            add_value = 1.0
+                            diff_val = abs(max_val[i].item() - target[i])
+                            if diff_val <= 7:
+                                add_value = 0.25
+                            elif diff_val <= 15:
+                                add_value = 0.5
+                            mistake_histogram[target[i]] += add_value
+                    for tar in target:
+                        lens_array[tar] += 1
+
+                count_all += len(input_x)
+
+                loss = loss.cuda()
+                loss.backward()
+                optimizer.step()
+
+            if not sched is None:
+                sched.step()
+            acc = correct / count_all
             if total_count % 25 == 0:
-                mistakes = (max_val != target).cpu().numpy()
-                for i, mistake in enumerate(mistakes):
-                    if mistake:
-                        add_value = 1.0
-                        diff_val = abs(max_val[i].item() - target[i])
-                        if diff_val <= 7:
-                            add_value = 0.25
-                        elif diff_val <= 15:
-                            add_value = 0.5
-                        mistake_histogram[target[i]] += add_value
-                for tar in target:
-                    lens_array[tar] += 1
+                acc = 1 - (sum(mistake_histogram) / sum(lens_array))
+                self.mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+                print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
+                # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
+                print(f"Mistakes: {mistake_histogram / lens_array}")
+                for i, value in enumerate(mistake_histogram / lens_array):
+                    if value < 0.1:
+                        self.weights[i] -= 0.1
+                    elif value > 0.8:
+                        self.weights[i] += 0.2
+                # print(f"Mistakes %: {self.mistake_acc}")
+                # print(f"Train Avg distance {distance / len(self.train_loader)}")
+                # print(f" Train acc = {acc}")
 
-            count_all += len(input_x)
+            return acc
 
-            loss = loss.cuda()
-            loss.backward()
-            optimizer.step()
-
-        if not sched is None:
-            sched.step()
-        acc = correct / count_all
-        if total_count % 25 == 0:
-            acc = 1 - (sum(mistake_histogram) / sum(lens_array))
-            self.mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-            print(f"Train Avg distance {distance / len(self.train_loader)} Train acc = {acc}")
-            # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-            print(f"Mistakes: {mistake_histogram / lens_array}")
-            for i, value in enumerate(mistake_histogram / lens_array):
-                if value < 0.1:
-                    self.weights[i] -= 0.1
-                elif value > 0.8:
-                    self.weights[i] += 0.2
-            # print(f"Mistakes %: {self.mistake_acc}")
-            # print(f"Train Avg distance {distance / len(self.train_loader)}")
-            # print(f" Train acc = {acc}")
-
-        return acc
+        else:
+            return 0
 
     def test_single_epoch(self, total_count):
         correct = 0
@@ -288,7 +284,7 @@ class ratingPredictor(nn.Module):
         acc = correct / count_all
         if total_count % 25 == 0:
             acc = 1 - (sum(mistake_histogram) / sum(lens_array))
-            # print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
+            print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
             mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
             # print(f"Mistakes: {mistake_histogram}")
             # print(f"Mistakes %: {mistake_acc}")
@@ -339,10 +335,6 @@ class ratingPredictor(nn.Module):
         weights = None
         count_err = 0
         while trial_count > 0:
-            # new_lr = optimizer.param_groups[0]['lr']
-            # if new_lr != self.lr:
-            #     print(new_lr)
-            #     self.lr = new_lr
             try:
                 self.train_single_epoch(optimizer, sched, total_count)
             except Exception as e:
@@ -387,9 +379,9 @@ class ratingPredictor(nn.Module):
 
 
         if count < max_count:
-            # self.label_manually(n=n, weights=weights)
+            self.label_manually(n=n, weights=weights)
             # if (not retrain) and count % 2 == 0:
-            #     self._fix_data_balance()
+            self._fix_data_balance()
             # self.m_factor /= 1.05
             self._update_weights()
             print("Finished cycle")
@@ -418,86 +410,90 @@ class ratingPredictor(nn.Module):
 
 
     def _fix_data_balance(self, first=False):
-        def _over_sampeling(flatten, split_samples, max_add_extra=100):
-            lens_array = np.array([len(i) for i in split_samples])
-            print(lens_array)
-            mean_len = lens_array.mean()
-            for rating, num_exmps in enumerate(lens_array):
-                fix_flag = False
-                if first:
-                    fix_flag = True
-                    max_add_extra = 300
-                if not self.mistake_acc is None:
-                    if self.mistake_acc[rating] > np.mean(self.mistake_acc) or lens_array[rating] < np.mean(lens_array):
+        def _over_sampeling(flatten, split_samples, max_add_extra=25):
+            try:
+                lens_array = np.array([len(i) for i in split_samples])
+                print(lens_array)
+                for rating, num_exmps in enumerate(lens_array):
+                    if num_exmps > np.mean(lens_array) + 50:
+                        continue
+                    fix_flag = False
+                    if first:
                         fix_flag = True
-                    else:
-                        fix_flag = False
-                if len(self.extra_ratings[rating]) != 0 and fix_flag:
-                    extras = self.extra_ratings[rating][:max_add_extra]
-                    extras = torch.stack(extras)
-                    split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
-                elif fix_flag:
-                    augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
-                    augs = torch.stack(augs)
-                    labels = torch.ones(len(split_samples[rating])) * rating
-                    data = split_samples[rating]
-                    prediction = self.predict(data)
-                    _, max_val = torch.max(prediction, dim=1)
-                    max_val = max_val.cpu()
-                    falses = max_val != labels
-                    add_augs_false = augs[falses][:max_add_extra]
-                    add_augs_others = random.choices(augs, k=max_add_extra-len(add_augs_false))
-                    if len(add_augs_false) == 0:
-                        augs = add_augs_others
-                    else:
-                        augs = flatten([add_augs_false, add_augs_others])
+                        max_add_extra = 300
+                    elif not self.mistake_acc is None:
+                        if self.mistake_acc[rating] > np.mean(self.mistake_acc) or lens_array[rating] < max(10, np.mean(lens_array)):
+                            fix_flag = True
+                        else:
+                            fix_flag = False
+                    if len(self.extra_ratings[rating]) != 0 and fix_flag:
+                        extras = self.extra_ratings[rating][:max_add_extra]
+                        extras = torch.stack(extras)
+                        split_samples[rating] = torch.stack(flatten([split_samples[rating], extras]))
+                    elif fix_flag and len(split_samples[rating]) != 0:
+                        augs = [self._create_data_aug(data_inst) for data_inst in split_samples[rating]]
                         augs = torch.stack(augs)
-                    split_samples[rating] = torch.stack(flatten([split_samples[rating], augs]))
-            return split_samples
-
-        def _under_sampeling(split_samples, max_remove=50):
-            lens_array = np.array([len(i) for i in split_samples])
-            print(lens_array)
-            mean_len = lens_array.mean()
-            for rating, num_exmps in enumerate(lens_array):
-                if num_exmps > min(lens_array) + 10:
-                    if not first:
                         labels = torch.ones(len(split_samples[rating])) * rating
                         data = split_samples[rating]
                         prediction = self.predict(data)
-                        certain, max_val = torch.max(prediction, dim=1)
+                        _, max_val = torch.max(prediction, dim=1)
                         max_val = max_val.cpu()
-                        certain = certain.cpu()
-                        to_remove_mask = (max_val == labels) & (certain > 0.55)
-                        index = -1
-                        value_to_remove = (num_exmps - min(lens_array)) / 3
-                        while sum(to_remove_mask) > max(0, value_to_remove) :
-                            to_remove_mask[index] = False
-                            index -= 1
-                        self.extra_ratings[rating].extend(split_samples[rating][to_remove_mask])
-                        split_samples[rating] = split_samples[rating][~to_remove_mask]
-                    else:
-                        if num_exmps < np.mean(lens_array):
-                            continue
+                        falses = max_val != labels
+                        add_augs_false = augs[falses][:max_add_extra]
+                        add_augs_others = random.choices(augs, k=max_add_extra-len(add_augs_false))
+                        if len(add_augs_false) == 0:
+                            augs = add_augs_others
                         else:
-                            max_keep = max(lens_array) - min(lens_array)
-                            max_keep = min(300, int(max_keep / 5))
-                            self.extra_ratings[rating].extend(split_samples[rating][:max_keep])
-                            split_samples[rating] = split_samples[rating][max_keep:]
+                            augs = flatten([add_augs_false, add_augs_others])
+                            augs = torch.stack(augs)
+                        split_samples[rating] = torch.stack(flatten([split_samples[rating], augs]))
+                return split_samples
+            except Exception as e:
+                return None
 
-            return split_samples
+        def _under_sampeling(split_samples, max_remove=50):
+            try:
+                lens_array = np.array([len(i) for i in split_samples])
+                print(lens_array)
+                mean_len = lens_array.mean()
+                for rating, num_exmps in enumerate(lens_array):
+                    if num_exmps > min(lens_array) + 10:
+                        if not first:
+                            labels = torch.ones(len(split_samples[rating])) * rating
+                            data = split_samples[rating]
+                            prediction = self.predict(data)
+                            certain, max_val = torch.max(prediction, dim=1)
+                            max_val = max_val.cpu()
+                            certain = certain.cpu()
+                            to_remove_mask = (max_val == labels) & (certain > 0.55)
+                            index = -1
+                            value_to_remove = (num_exmps - min(lens_array)) / 3
+                            while sum(to_remove_mask) > max(0, value_to_remove) :
+                                to_remove_mask[index] = False
+                                index -= 1
+                            self.extra_ratings[rating].extend(split_samples[rating][to_remove_mask])
+                            split_samples[rating] = split_samples[rating][~to_remove_mask]
+                        else:
+                            if num_exmps < np.mean(lens_array):
+                                continue
+                            else:
+                                max_keep = max(lens_array) - min(lens_array)
+                                max_keep = min(300, int(max_keep / 5))
+                                self.extra_ratings[rating].extend(split_samples[rating][:max_keep])
+                                split_samples[rating] = split_samples[rating][max_keep:]
 
+                return split_samples
+            except Exception as e:
+                return None
 
         flatten = lambda list_list: [item for sublist in list_list for item in sublist]
         split_samples = [self.rating_df_train[self.ratings_col_train == i] for i in range(0, MAX_RATING)]
-        split_samples = _over_sampeling(flatten, split_samples)
-
-        # if first:
-        split_samples = _under_sampeling(split_samples)
-        # if first:
-        #     split_samples[0] = split_samples[0][:2000]
-        #     split_samples[1] = split_samples[1][:2000]
-        #     split_samples[2] = split_samples[2][:2000]
+        new_split_samples = _over_sampeling(flatten, split_samples)
+        if not new_split_samples is None:
+            split_samples = new_split_samples
+        new_split_samples = _under_sampeling(split_samples)
+        if not new_split_samples is None:
+            split_samples = new_split_samples
         lens_array = np.array([len(i) for i in split_samples])
 
         print(lens_array)
@@ -508,11 +504,15 @@ class ratingPredictor(nn.Module):
         self.rating_df_train = torch.stack(split_samples).cuda()
 
 
+        if not first:
+            self.rating_df_train = self.rating_df_train.cuda()
+            train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
+            self.train_loader = data_utils.DataLoader(train, batch_size=256, shuffle=True)
 
-        self.rating_df_train = self.rating_df_train.cuda()
-        train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
-        self.train_loader = data_utils.DataLoader(train, batch_size=256, shuffle=True)
-
+        else:
+            self.rating_df_train = None
+            self.ratings_col_train = None
+            self.train_loader = None
 
 
 
@@ -528,6 +528,7 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
         else:
             return knn_based_rating(model, events, all_conds, str_pattern, actions)
     else:
+        return 1, 1 # GPU first test
         return other_rating(model, events, all_conds, actions)
 
 
