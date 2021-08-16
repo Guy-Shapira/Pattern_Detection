@@ -17,8 +17,8 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 
 # from plugin.Football.Football_processed import DataFormatter
-from plugin.StarPilot.StarPilot_processed import DataFormatter
-# from plugin.GPU.GPU_processed import DataFormatter
+# from plugin.StarPilot.StarPilot_processed import DataFormatter
+from plugin.GPU.GPU_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
 
@@ -61,6 +61,11 @@ DEFAULT_TESTING_EVALUATION_MECHANISM_SETTINGS = TreeBasedEvaluationMechanismPara
 
 
 DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
+
+
+torch.manual_seed(42)
+random.seed(42)
+np.random.seed(42)
 
 
 def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_target):
@@ -269,9 +274,10 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
 
 
 @timeout_decorator.timeout(40)
-def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
+def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, conds, all_comps, max_time ):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
+    :param exp_name: the name of dataset used for the model
     :param actions: all actions the model suggested
     :param action_types: all action types (comparison with other attribute, comparison with value, ect.)
     :param index: episode number
@@ -296,7 +302,7 @@ def OpenCEP_pattern(actions, action_types, index, comp_values, cols, conds, all_
     # print(pattern)
     # if len(all_events) >= 2:
     #     exit()
-    run_OpenCEP(str(index), [pattern])
+    run_OpenCEP(exp_name, str(index), [pattern])
     return pattern
 
 
@@ -309,7 +315,9 @@ def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_M
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
+
 def run_OpenCEP(
+    exp_name,
     test_name,
     patterns,
     events=None,
@@ -326,7 +334,7 @@ def run_OpenCEP(
     cep = CEP(patterns, eval_mechanism_params)
     if events is None:
         events = FileInputStream(
-            os.path.join(absolutePath, "Model", "training", "{}.txt".format(test_name))
+            os.path.join(absolutePath, "Model", "training", exp_name, "{}.txt".format(test_name))
         )
         base_matches_directory = os.path.join(absolutePath, "Data", "Matches")
 
@@ -340,16 +348,17 @@ def run_OpenCEP(
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
-@timeout_decorator.timeout(20)
-def calc_near_windows(index, pattern, pattern_len, max_fine_app, window_size, data_len):
+
+@timeout_decorator.timeout(60)
+def calc_near_windows(exp_name, index, pattern, pattern_len, max_fine_app, window_size, data_len):
     reward = 0
-    jump_val = window_size / 2
+    jump_val = 5
     near_windows = [index - 2 * jump_val, index - jump_val, index + jump_val, index + 2 * jump_val]
     near_windows = [int(i) for i in near_windows]
     near_windows = list(filter(lambda x: x > 0 and x < data_len - 1, near_windows))
 
     for ind in [index - 1 , index + 1]:
-        run_OpenCEP(str(ind), [pattern])
+        run_OpenCEP(exp_name, str(ind), [pattern])
         with open("Data/Matches/{}Matches.txt".format(ind), "r") as f:
             content = f.read()
             new_reward = int(content.count("\n") / (pattern_len + 1))
@@ -518,8 +527,8 @@ def replace_values(comp_vals, selected_values):
     new_comp_vals = []
     for val in comp_vals:
         if not val == "nop":
-            # new_comp_vals.append(selected_values[count] / 100)
-            new_comp_vals.append(selected_values[count])
+            new_comp_vals.append(selected_values[count] / 100) #GPU runs!
+            # new_comp_vals.append(selected_values[count]) #non GPU runs!
             count += 1
         else:
             new_comp_vals.append("nop")
@@ -537,7 +546,7 @@ def ball_patterns(events):
     return False
 
 
-def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time):
+def store_to_file(actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time, exp_name):
     """
     stores relavent info to txt files
     :param actions: list of actions (events)
@@ -550,11 +559,13 @@ def store_to_file(actions, action_types, index, comp_values, cols, conds, new_co
     :param targets: list of list, the i-th inner list contains the comparison targets of the i-th event in the pattern
     :param max_fine: max leagal appearances of pattern in a single window
     :param max_time: max length (time wise) of pattern
+    :param exp_name: the name of dataset used for the model
+
     :return: has no return value
     """
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time"]
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time", "exp_name"]
     NAMES = [name + ".txt" for name in NAMES]
-    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time]
+    TO_WRITE = [actions, action_types, index, comp_values, cols, conds, new_comp_vals, targets, max_fine, max_time, exp_name]
     for file_name, file_content in zip(NAMES, TO_WRITE):
         with open(file_name, 'wb') as f:
             pickle.dump(file_content, f)
@@ -601,13 +612,13 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
 
 
 
-@timeout_decorator.timeout(20)
+@timeout_decorator.timeout(60)
 def bayesian_function(**values):
     """
     list of values to do bayesian serach on, each value has it's predefined range
     :return: chosen value to compare with for each comparison with value in the pattern
     """
-    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time"]
+    NAMES = ["actions", "action_type",  "index", "comp_values", "cols", "conds", "new_comp_vals", "targets", "max_fine", "max_time", "exp_name"]
     NAMES = [name + ".txt" for name in NAMES]
     TO_READ = [[] for _ in range(len(NAMES))]
     for i, name in enumerate(NAMES):
@@ -624,6 +635,7 @@ def bayesian_function(**values):
     targets = TO_READ[7]
     max_fine = TO_READ[8]
     max_time = TO_READ[9]
+    exp_name = TO_READ[10]
     count = 0
     to_return_comp_vals = []
 
@@ -640,7 +652,7 @@ def bayesian_function(**values):
 
     # calls run_OpenCEP
     pattern = OpenCEP_pattern(
-        actions, action_types, index, try_comp_vals, cols, conds, targets, max_time
+        exp_name, actions, action_types, index, try_comp_vals, cols, conds, targets, max_time
     )
     # checks and return output
     with open("Data/Matches/{}Matches.txt".format(index), "r") as f:

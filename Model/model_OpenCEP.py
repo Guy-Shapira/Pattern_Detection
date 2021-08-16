@@ -67,6 +67,11 @@ class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
 
+torch.manual_seed(42)
+random.seed(42)
+np.random.seed(42)
+
+
 with torch.autograd.detect_anomaly():
     class ruleMiningClass(nn.Module):
         def __init__(
@@ -130,8 +135,8 @@ with torch.autograd.detect_anomaly():
                                 embeddding_total_size=EMBDEDDING_TOTAL_SIZE
                                 )
 
-            # self._create_training_dir(data_path)
-            # print("finished training dir creation!")
+            self._create_training_dir(data_path)
+            print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -142,6 +147,7 @@ with torch.autograd.detect_anomaly():
             self.cols = eff_cols
             self.max_fine_app = max_fine_app
             self.knn_avg = 0
+            self.certainty = 0
             if not pattern_path == "":
                 self.knn = self._create_df(pattern_path)
             self.max_time = max_time
@@ -226,15 +232,16 @@ with torch.autograd.detect_anomaly():
 
             test_pred = ratingPredictor(df_new, df["rating"])
             self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=1e-4)
-            self.pred_sched = StepLR(self.pred_optim, step_size=3000, gamma=0.3)
+            self.pred_sched = StepLR(self.pred_optim, step_size=3000000, gamma=0.3)
 
-            # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+            if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
             # if False:
-            #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-            #     torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-            # else:
-            #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
-            # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=1, max_total_count=10, n=0)
+                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+                torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            else:
+                test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+
+            self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=10, n=0)
 
             print(len(test_pred.ratings_col_train))
             self.pred_pattern = test_pred
@@ -328,8 +335,8 @@ with torch.autograd.detect_anomaly():
             return all_data
 
         def _create_training_dir(self, data_path):
-            if not os.path.exists("Model/training/"):
-                os.mkdir("Model/training/")
+            if not os.path.exists(f"Model/training/{self.exp_name}"):
+                os.mkdir(f"Model/training/{self.exp_name}")
             lines = []
             if self.exp_name == "Football":
                 with open(data_path) as f:
@@ -337,7 +344,7 @@ with torch.autograd.detect_anomaly():
                         lines.append(line)
 
                 for i in range(0, len(lines) - self.window_size):
-                    with open("Model/training/{}.txt".format(i), "w") as f:
+                    with open(f"Model/training/{self.exp_name}/{i}.txt, "w") as f:
                         for j in range(i, i + self.window_size):
                             f.write(lines[j])
             elif self.exp_name == "StarPilot":
@@ -350,7 +357,7 @@ with torch.autograd.detect_anomaly():
                             lines.append(line)
 
                         for i in range(0, len(lines) - self.window_size):
-                            with open(f"Model/training/{str(current_files_created)}.txt", "w") as new_file:
+                            with open(f"Model/training/{self.exp_name}/{str(current_files_created)}.txt", "w") as new_file:
                                 for j in range(i, i + self.window_size):
                                     new_file.write(lines[j])
                             current_files_created += 1
@@ -655,7 +662,7 @@ with torch.autograd.detect_anomaly():
 
             with tqdm.tqdm(total=bs, file=pbar_file) as pbar:
                 in_round_count = 0
-                path = os.path.join(absolutePath, "Model", "training")
+                path = os.path.join(absolutePath, "Model", "training", model.exp_name)
                 data_len = len(os.listdir(path))
                 for index in range(epoch + 2, min(data_len - 2, len(model.data)), data_len // bs):
                     set_data = None
@@ -756,7 +763,7 @@ with torch.autograd.detect_anomaly():
                             actions.append(mini_actions)
 
 
-                            file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(index))
+                            file = os.path.join(absolutePath, "Model", "training", model.exp_name, "{}.txt".format(index))
 
                             all_conds.append(conds)
 
@@ -767,7 +774,7 @@ with torch.autograd.detect_anomaly():
                                     all_conds, file, model.max_values_bayes,
                                     model.min_values_bayes
                                 )
-                                store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app, model.max_time)
+                                store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app, model.max_time, model.exp_name)
                                 b_optimizer = BayesianOptimization(
                                     f=bayesian_function,
                                     pbounds=bayesian_dict,
@@ -789,7 +796,8 @@ with torch.autograd.detect_anomaly():
                             finished_flag = True
                             try:
                                 pattern = OpenCEP_pattern(
-                                    events, actions, index, comp_values, model.cols, all_conds, all_comps, model.max_time
+                                    model.exp_name,events, actions, index, comp_values,
+                                     model.cols, all_conds, all_comps, model.max_time
                                 )
                             except Exception as e:
                                 # timeout error
@@ -840,7 +848,7 @@ with torch.autograd.detect_anomaly():
                                             raise(e)
 
                                     try:
-                                        near_windows_rewards = calc_near_windows(index, pattern, len(actions),
+                                        near_windows_rewards = calc_near_windows(model.exp_name, index, pattern, len(actions),
                                             model.max_fine_app, model.window_size, data_len)
                                         reward = reward * 0.75 + near_windows_rewards * 0.25
 
@@ -929,7 +937,8 @@ with torch.autograd.detect_anomaly():
                             wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                     "max rating": np.max(ratings), "actor_flag": int(actor_flag),
                                     "actor_loss_reward": a1, "critic_loss_reward": c1,
-                                    "curent_step": total_steps_trained})
+                                    "curent_step": total_steps_trained,
+                                    "certainty": model.certainty})
 
                         # if total_steps_trained > 4500:
                         #     # Only for sweeps!
@@ -957,11 +966,11 @@ with torch.autograd.detect_anomaly():
                             g2['lr'] *= 0.95
                         # continue
                         break
-                    if epoch < 2 and in_round_count % 25 == 0 and (in_round_count % 100 != 0) and not (in_round_count == 0):
+                    if epoch < 2 and in_round_count in [25, 150, 250, 600, 700]:
                         model.pred_pattern.save_all()
                         model.pred_pattern.train()
-                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
-                        model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-4)
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=0, retrain=True)
 
 
                 rating_groups = [

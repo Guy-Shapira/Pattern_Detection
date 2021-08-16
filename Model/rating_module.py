@@ -13,11 +13,19 @@ import os
 
 PATTERN_LEN = 40
 MAX_RATING = 50
+
+torch.manual_seed(42)
 random.seed(42)
+np.random.seed(0)
+
+
 np.seterr('raise')
-SPLIT_1 = 0
-SPLIT_2 = 30000
+
+
+SPLIT_1 = 39000
+SPLIT_2 = 40000
 SPLIT_3 = 41000
+
 
 
 # SPLIT_1 = 3900
@@ -270,10 +278,12 @@ class ratingPredictor(nn.Module):
                     if mistake:
                         add_value = 1.0
                         diff_val = abs(max_val[i].item() -target[i])
-                        if diff_val <= 7:
+                        if diff_val <= 10:
                             add_value = 0.25
                         elif diff_val <= 15:
                             add_value = 0.5
+                        elif diff_val < 20:
+                            add_value = 0.75
                         mistake_histogram[target[i]] += add_value
                 for tar in target:
                     lens_array[tar] += 1
@@ -386,8 +396,11 @@ class ratingPredictor(nn.Module):
             self._update_weights()
             print("Finished cycle")
 
-            self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
-
+            return self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
+        
+        else:
+            return acc
+        
 
     def _update_weights(self):
         self.weights = self.weights.cuda()
@@ -528,7 +541,7 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
         else:
             return knn_based_rating(model, events, all_conds, str_pattern, actions)
     else:
-        return 1, 1 # GPU first test
+        # return 1, 1 # GPU first test
         return other_rating(model, events, all_conds, actions)
 
 
@@ -580,8 +593,8 @@ def other_rating(model, events, all_conds, actions):
     unique, app_count = np.unique(events, return_counts=True)
     for k in range(len(unique)):
         rating += math.pow(0.7, k + 1) * app_count[k] * 1.3
-    if "finish" in events:
-        rating += 0.5
+    # if "finish" in events:
+    #     rating += 0.5
     if len(events) > 2 and len(unique) == 1:
         rating *= 0.5
     if len(events) >= 3:

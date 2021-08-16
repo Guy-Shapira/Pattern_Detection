@@ -1,60 +1,21 @@
-import argparse
 import torch
 import random
 import torch.nn as nn
-import os
 from copy import deepcopy
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-# warnings.filterwarnings("ignore", category=UserWarning)
-
+import numpy as np
+import torch.nn.functional as F
 from Model.utils import (
-    OpenCEP_pattern,
-    after_epoch_test,
-    new_mapping,
-    get_action_type,
-    create_pattern_str,
-    ball_patterns,
-    bayesian_function,
-    set_values_bayesian,
-    store_to_file,
-    replace_values,
-    run_OpenCEP,
-    check_predictor,
-    calc_near_windows,
     OverFlowError,
 )
 
-from Model.rating_module import (
-    rating_main,
-    ratingPredictor,
 
-)
 
-import tqdm
-import pathlib
-import ast
-import sys
-import time
-from itertools import count
-from multiprocessing import Process, Queue
-import torch.nn.functional as F
-from torch.autograd import Variable
-import torch.cuda as cuda_handle
-import gc
-import numpy as np
-import matplotlib
-matplotlib.use('pdf')
-import matplotlib.pyplot as plt
-from shutil import copyfile
-import datetime
-from difflib import SequenceMatcher
-import pandas as pd
-from stream.FileStream import FileInputStream, FileOutputStream
-from sklearn.neighbors import KNeighborsClassifier as KNN
-import wandb
-import json
-from torch.optim.lr_scheduler import StepLR
+torch.manual_seed(42)
+random.seed(42)
+np.random.seed(42)
+
 
 class ModelBase(nn.Module):
     def __init__(self, hidden_size1, hidden_size2,

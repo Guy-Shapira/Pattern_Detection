@@ -96,6 +96,8 @@ with torch.autograd.detect_anomaly():
             self.actions = [">", "<", "="]
             self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
             self.events = np.loadtxt(events_path, dtype='str')
+            if self.exp_name == "GPU":
+                self.events = [int(event) for event in self.events]
             self.num_events = len(self.events)
             self.match_max_size = match_max_size
             self.max_values = max_values
@@ -270,14 +272,14 @@ with torch.autograd.detect_anomaly():
                         else:
                             index = -1
                         event = values[index]
+                        if self.exp_name == "GPU":
+                            event = int(event)
                         event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
                         if self.exp_name == "Football":
                             values = values[2:] # skip sid and ts
                         else:
-                            values = values[1:] # skip sid and ts
-                            values = values[:-1]
-                        # print(values)
-                        # print(len(values))
+                            values = values[1:] # skip timestamp 
+                            values = values[:-1] #skip server name (event)
                         try:
                             embed_values = [self.embedding_values[i](torch.tensor(int(float(value) * 100) + self.normailze_values[i])) for (i,value) in enumerate(values[:len(self.normailze_values)])]
                             embed_values.insert(0, event)
@@ -356,8 +358,8 @@ with torch.autograd.detect_anomaly():
             return all_data
 
         def _create_training_dir(self, data_path):
-            if not os.path.exists("Model/training/"):
-                os.mkdir("Model/training/")
+            if not os.path.exists(f"Model/training/{self.exp_name}"):
+                os.mkdir(f"Model/training/{self.exp_name}")
             lines = []
             if self.exp_name in ["Football", "GPU"]:
                 with open(data_path) as f:
@@ -366,7 +368,7 @@ with torch.autograd.detect_anomaly():
 
                 count = 0
                 for i in range(0, len(lines) - self.window_size, self.window_size // 10):
-                    with open("Model/training/{}.txt".format(count), "w") as f:
+                    with open(f"Model/training/{self.exp_name}/{count}.txt", "w") as f:
                         for j in range(i, i + self.window_size):
                             f.write(lines[j])
                     count += 1
@@ -381,7 +383,7 @@ with torch.autograd.detect_anomaly():
                             lines.append(line)
 
                         for i in range(0, len(lines) - self.window_size):
-                            with open(f"Model/training/{str(current_files_created)}.txt", "w") as new_file:
+                            with open(f"Model/training/{self.exp_name}/{str(current_files_created)}.txt", "w") as new_file:
                                 for j in range(i, i + self.window_size):
                                     new_file.write(lines[j])
                             current_files_created += 1
@@ -480,7 +482,6 @@ with torch.autograd.detect_anomaly():
             """
             l1_norm = sum(log_prob.abs().sum() for log_prob in log_probs)
             return l1_lambda*l1_norm / len(log_probs)
-
         Qvals_reward = np.zeros_like(values_reward)
         Qvals_rating = np.zeros_like(values_rating)
         for t in reversed(range(len(rewards))):
@@ -490,7 +491,9 @@ with torch.autograd.detect_anomaly():
             Qvals_rating[t] = Qval_1
 
         values = torch.FloatTensor((values_reward, values_rating)).requires_grad_(True)
+        # values = torch.FloatTensor(values_reward).requires_grad_(True)
         Qvals = torch.FloatTensor((Qvals_reward, Qvals_rating)).requires_grad_(True)
+        # Qvals = torch.FloatTensor(Qvals_reward).requires_grad_(True)
         log_probs = torch.stack(log_probs).requires_grad_(True)
         advantage = Qvals - values
         advantage = advantage.to(log_probs.device)
@@ -572,9 +575,9 @@ with torch.autograd.detect_anomaly():
 
             with tqdm.tqdm(total=bs, file=pbar_file) as pbar:
                 in_round_count = 0
-                path = os.path.join(absolutePath, "Model", "training")
+                path = os.path.join(absolutePath, "Model", "training", model.exp_name)
                 data_len = len(os.listdir(path))
-                for index in range(epoch + 2, min(data_len - 2, len(model.data)), data_len // bs):
+                for index in range(epoch + 2, min(data_len - 2, len(model.data)), max(data_len // bs, 1)):
                     set_data = None
                     if total_count >= bs:
                         total_count = 0
@@ -641,8 +644,11 @@ with torch.autograd.detect_anomaly():
                                 rewards.append(-1.5)
                                 real_rewards.append(-1.5)
                             else:
-                                rewards.append(10)
-                                real_rewards.append(10)
+                                add_reward = 0
+                                if min(real_rewards) > 0:
+                                    add_reward = max(real_rewards)
+                                rewards.append(add_reward)
+                                real_rewards.append(add_reward)
                                 break
                         else:
                             event = new_mapping(action, model.events)
@@ -660,7 +666,7 @@ with torch.autograd.detect_anomaly():
                             actions.append(mini_actions)
 
 
-                            file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(index))
+                            file = os.path.join(absolutePath, "Model", "training", model.exp_name, "{}.txt".format(index))
 
                             all_conds.append(conds)
 
@@ -671,7 +677,7 @@ with torch.autograd.detect_anomaly():
                                     all_conds, file, model.max_values_bayes,
                                     model.min_values_bayes
                                 )
-                                store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app, model.max_time)
+                                store_to_file(events, actions, index, comp_values, model.cols, all_conds, comp_vals, all_comps, model.max_fine_app, model.max_time, model.exp_name)
                                 b_optimizer = BayesianOptimization(
                                     f=bayesian_function,
                                     pbounds=bayesian_dict,
@@ -693,12 +699,16 @@ with torch.autograd.detect_anomaly():
                             finished_flag = True
                             try:
                                 pattern = OpenCEP_pattern(
-                                    events, actions, index, comp_values, model.cols, all_conds, all_comps, model.max_time
+                                    model.exp_name, events, actions, index, comp_values,
+                                     model.cols, all_conds, all_comps, model.max_time
                                 )
                             except Exception as e:
                                 # timeout error
+                                print(e)
+                                # raise(e)
                                 finished_flag = False
                                 not_finished_count += 1
+                                print("Time out")
 
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                             rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
@@ -719,6 +729,7 @@ with torch.autograd.detect_anomaly():
                                 eff_pattern = pattern.condition
 
                                 with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+                                    # input(f" current file: {index} wait what de fuck")
                                     content = f.read()
                                     reward = int(content.count("\n") / (len(actions) + 1))
                                     if reward >= model.max_fine_app:
@@ -726,7 +737,10 @@ with torch.autograd.detect_anomaly():
                                     global EMBDEDDING_TOTAL_SIZE
                                     if reward != 0:
                                         try:
-                                            first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
+                                            if model.exp_name == "StarPilot":
+                                                first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
+                                            else:
+                                                first_ts = content.split("\n")[0].split("Timestamp\': ")[1].split(",")[0]
                                             with open(file, "r") as data_file:
                                                 content = data_file.read()
                                             lines = content.split("\n")
@@ -744,22 +758,22 @@ with torch.autograd.detect_anomaly():
                                             raise(e)
 
                                     try:
-                                        near_windows_rewards = calc_near_windows(index, pattern, len(actions),
+                                        near_windows_rewards = calc_near_windows(model.exp_name, index, pattern, len(actions),
                                             model.max_fine_app, model.window_size, data_len)
                                         reward = reward * 0.75 + near_windows_rewards * 0.25
 
                                     except Exception as e:
                                         print(e)
+                                        # raise(e)
                                         pass
                                     real_rewards.append(reward)
-                                    # if reward == 0 and turn_flag:
-                                    #     normalize_reward.append(-25)
-                                    #     rewards.append(-1.5)
-                                    #     break
+                                    # input(f"current file: {index} step: {len(actions)} reward: {reward}")
+
                                     normalize_reward.append(reward - 20)
                                     #TODO: Remove this!
                                     # reward *= rating
-                                    reward *= (rating / 5)
+                                    # reward *= (rating / 5)
+                                    reward *= rating
                                     rewards.append(reward)
                                     if len(best_found) < 10:
                                         best_found.update({reward: pattern})
@@ -779,10 +793,10 @@ with torch.autograd.detect_anomaly():
 
                     del data
                     gc.collect()
-                    if turn_flag == 0:
-                        send_rewards = ratings
-                    else:
-                        send_rewards = real_rewards
+                    # if turn_flag == 0:
+                    #     send_rewards = ratings
+                    # else:
+                    #     send_rewards = real_rewards
 
                     actor_flag = False
                     if count_actor < 100:
@@ -808,7 +822,7 @@ with torch.autograd.detect_anomaly():
                     real.append(real_rewards[index_max])
                     rating_plot.append(ratings[index_max])
                     mean_real.append(np.mean(real_rewards))
-
+                    # print(f"Real rewards: {real_rewards}")
                     if True:
                         sys.stdout.write(
                             "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
@@ -821,7 +835,7 @@ with torch.autograd.detect_anomaly():
                         if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
                             wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                     "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                    "actor_loss_reward": a1, "critic_loss_reward": c1,
+                                    "actor_loss": a1, "critic_loss": c1,
                                     "curent_step": total_steps_trained})
 
                         # if total_steps_trained > 4500:
@@ -904,16 +918,16 @@ with torch.autograd.detect_anomaly():
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-                if epoch < 2:
-                    model.pred_pattern.save_all()
-                    # model.pred_pattern.train()
-                    # model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
-                    # model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
-                if False:
-                    after_epoch_test(best_pattern)
-                    with open("Data/Matches/allMatches.txt", "r") as f:
-                        results.append(int(f.read().count("\n") / (max_len_best + 1)))
-                    os.remove("Data/Matches/allMatches.txt")
+                # if epoch < 2:
+                #     # model.pred_pattern.save_all()
+                #     # model.pred_pattern.train()
+                #     # model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
+                #     # model.pred_pattern._train(model.pred_optim, None, count=0, max_count=5, max_total_count=50, n=3, retrain=True)
+                # if False:
+                #     after_epoch_test(best_pattern)
+                # #     with open("Data/Matches/allMatches.txt", "r") as f:
+                #         results.append(int(f.read().count("\n") / (max_len_best + 1)))
+                #     os.remove("Data/Matches/allMatches.txt")
 
         if test_epcohs:
             print(results)
@@ -1015,19 +1029,19 @@ with torch.autograd.detect_anomaly():
 
     if __name__ == "__main__":
         parser = argparse.ArgumentParser(description='CEP pattern miner')
-        parser.add_argument('--bs', default=500, type=int, help='batch size')
+        parser.add_argument('--bs', default=250, type=int, help='batch size')
         parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
-        parser.add_argument('--lr_actor', default=5e-8, type=float, help='starting learning rate for actor')
-        parser.add_argument('--lr_critic', default=5e-6, type=float, help='starting learning rate for critic')
+        parser.add_argument('--lr_actor', default=5e-9, type=float, help='starting learning rate for actor')
+        parser.add_argument('--lr_critic', default=5e-7, type=float, help='starting learning rate for critic')
         parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
         parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
         parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
         parser.add_argument('--max_fine_app', default=150, type=int, help='max appearance of pattnern in a single window')
         parser.add_argument('--pattern_max_time', default=100, type=int, help='maximum time for pattern (seconds)')
-        parser.add_argument('--window_size', default=700, type=int, help='max size of input window')
+        parser.add_argument('--window_size', default=800, type=int, help='max size of input window')
         parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
         parser.add_argument('--split_factor', default=0.2, type=float, help='split how much train to rating and how much for reward')
-        parser.add_argument('--data_path', default='GPU/gpu_test.csv', help='path to data log')
+        parser.add_argument('--data_path', default='GPU/full_data_fixed.csv', help='path to data log')
 
         parser.add_argument('--events_path', default='GPU/Events', help='path to list of events')
 
