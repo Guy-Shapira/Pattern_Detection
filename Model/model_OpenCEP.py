@@ -710,7 +710,7 @@ with torch.autograd.detect_anomaly():
                         [],
                         [],
                     )
-                    patterns = []
+                    patterns, special_reward = [] , []
                     normalize_rating, normalize_reward = [], []
                     # mask = torch.tensor([1.0] * (model.num_events + 1))
                     # if in_round_count % 35 == 0 and epoch < 5:
@@ -731,17 +731,10 @@ with torch.autograd.detect_anomaly():
                             torch.tensor(action)
                         ).cuda()
                         count += 1
-                        # if turn_flag == 0:
-                        #     value = value_rating
-                        # else:
-                        #     value = value_reward
-
-                        # value = value.detach().cpu().numpy()[0]
                         value_rating = value_rating.detach().cpu().numpy()[0]
                         value_reward = value_reward.detach().cpu().numpy()[0]
                         values_rating.append(value_rating)
                         values_reward.append(value_reward)
-                        # values.append(value)
                         entropy_term += entropy
 
                         if action == model.num_events:
@@ -749,13 +742,17 @@ with torch.autograd.detect_anomaly():
                             log_probs.append(log_prob)
 
                             if len(actions) == 0:
-                                rewards.append(-1.5)
-                                real_rewards.append(-1.5)
+                                # rewards.append(-1.5)
+                                # real_rewards.append(-1.5)
+                                special_reward.append(-1.5)
+                                break
                             else:
-                                rewards.append(10)
-                                real_rewards.append(10)
+                                # rewards.append(10)
+                                # real_rewards.append(10)
+                                special_reward.append(10)
                                 break
                         else:
+                            special_reward.append(None)
                             event = new_mapping(action, model.events)
                             events.append(event)
                             mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to, value_reward, value_rating = \
@@ -801,112 +798,94 @@ with torch.autograd.detect_anomaly():
 
                             comp_values.append(comp_vals)
                             finished_flag = True
-                            # try:
                             pattern = OpenCEP_pattern(
                                 model.exp_name, events, actions, index, comp_values,
                                     model.cols, all_conds, all_comps, model.max_time
                             )
                             patterns.append(pattern)
-                            # except Exception as e:
-                            #     # raise(e)
-                            #     # timeout error
-                            #     finished_flag = False
-                            #     not_finished_count += 1
-
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                             rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
-
                             #TODO: remove, added for sacle factor testing
                             # rating /= 5
-
                             ratings.append(rating)
                             normalize_rating.append(norm_rating)
-
-                            if not finished_flag:
-                                reward = -5
-                                rewards.append(reward)
-                                real_rewards.append(reward)
-                                normalize_reward.append(reward - 20)
-                                is_done = True
-                            else:
-                                eff_pattern = pattern.condition
-
-                                with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
-                                    content = f.read()
-                                    reward = int(content.count("\n") / (len(actions) + 1))
-                                    if reward >= model.max_fine_app:
-                                        reward = 2 * model.max_fine_app - reward
-                                    global EMBDEDDING_TOTAL_SIZE
-                                    if reward != 0:
-                                        try:
-                                            first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
-                                            with open(file, "r") as data_file:
-                                                content = data_file.read()
-                                            lines = content.split("\n")
-                                            row_idx = 0
-                                            for num, line in enumerate(lines):
-                                                if line.startswith(first_ts):
-                                                    row_idx = num
-                                                    break
-                                            chunk_size = EMBDEDDING_TOTAL_SIZE * row_idx
-                                            set_data = torch.tensor([i for i in data])
-                                            set_data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
-                                        except Exception as e:
-                                            print(e)
-                                            print(f"Reward : {reward}")
-                                            raise(e)
-
-                                    try:
-                                        near_windows_rewards = calc_near_windows(model.exp_name, index, pattern, len(actions),
-                                            model.max_fine_app, model.window_size, data_len)
-                                        reward = reward * 0.75 + near_windows_rewards * 0.25
-
-                                    except Exception as e:
-                                        print(e)
-                                        pass
-                                    real_rewards.append(reward)
-                                    # if reward == 0 and turn_flag:
-                                    #     normalize_reward.append(-25)
-                                    #     rewards.append(-1.5)
-                                    #     break
-                                    normalize_reward.append(reward - 20)
-                                    #TODO: Remove this!
-                                    # reward *= (rating / 5)
-                                    reward *= rating
-
-                                    rewards.append(reward)
-                                    if len(best_found) < 10:
-                                        best_found.update({reward: pattern})
-                                    else:
-                                        worst_reward = sorted(list(best_found.keys()))[0]
-                                        if reward > worst_reward:
-                                            del best_found[worst_reward]
-                                            best_found.update({reward: pattern})
-
 
                         if count >= model.match_max_size:
                             is_done = True
 
-                    # _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), mask, training_factor=training_factor, T=temper)
-                    _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), training_factor=training_factor)
-                    # if turn_flag == 0:
+                           
+                    # after loop ended- calc reward for all patterns and update policy
+                    try:
+                        run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
 
-                    #     Qval = Qval_rating.detach().cpu().numpy()[0]
-                    # else:
-                    #     Qval = Qval_reward.detach().cpu().numpy()[0]
+                    except Exception as e:
+                        # raise(e)
+                        # timeout error
+                        finished_flag = False
+                        not_finished_count += 1
+
+                    with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+                        content = f.read()
+                        for pattern_index, pattern_rating in enumerate(ratings):
+                            sp_rew = special_reward[pattern_index]
+                            if not sp_rew is None:
+                                rewards.append(sp_rew)
+                                real_rewards.append(sp_rew)
+                                normalize_reward.append(sp_rew - 20)
+
+                            else:
+                                if not finished_flag:
+                                    reward = -5
+                                    rewards.append(reward)
+                                    real_rewards.append(reward)
+                                    normalize_reward.append(reward - 20)
+                                    is_done = True
+                                else:
+                                    reward = int(content.count(f"{pattern_index}: "))
+                                    if reward >= model.max_fine_app:
+                                        reward = 2 * model.max_fine_app - reward
+                                    real_rewards.append(reward)
+                                    normalize_reward.append(reward - 20)
+
+                    try:
+                        if finished_flag:
+                            near_windows_rewards = calc_near_windows(model.exp_name, index, patterns,
+                                model.max_fine_app, data_len)
+
+                            for pattern_index, pattern_rating in enumerate(ratings):
+                                sp_rew = special_reward[pattern_index]
+                                if sp_rew is None:
+                                    reward = real_rewards[pattern_index] * 0.75 + near_windows_rewards[pattern_index] * 0.25
+
+                                    reward *= pattern_rating
+
+                                    rewards.append(reward)
+                                if len(best_found) < 10:
+                                    best_found.update({reward: pattern})
+                                else:
+                                    worst_reward = sorted(list(best_found.keys()))[0]
+                                    if reward > worst_reward:
+                                        del best_found[worst_reward]
+                                        best_found.update({reward: pattern})
+
+                    except Exception as e:
+                        print(e)
+                        raise e
+                        if not finished_flag:
+                            continue
+                        else:
+                            rewards = [pattern_rating * real_rew for pattern_rating, real_rew in zip(ratings, real_rewards)]
+
+                        
+
+                    _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), training_factor=training_factor)
                     Qval_rating = Qval_rating.detach().cpu().numpy()[0]
                     Qval_reward = Qval_reward.detach().cpu().numpy()[0]
-                    if len(patterns) >= 2:
-                        run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
+
                     del data
                     gc.collect()
-                    if turn_flag == 0:
-                        send_rewards = ratings
-                    else:
-                        send_rewards = real_rewards
-
                     actor_flag = False
-                    # if num_epochs_trained <= 6:
+
                     if count_actor < 100:
                         actor_flag = True
                         count_actor += 1
@@ -915,10 +894,9 @@ with torch.autograd.detect_anomaly():
                     else:
                         count_actor = 0
                         count_critic = 0
-                    # else:
-                    #     actor_flag = True
 
-                    a1, c1  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
+                    print(f"Real Rewards : {len(real_rewards)}, Rewards: {len(rewards)}, Ratings: {len(ratings)} ")
+                    actor_loss , critic_loss  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
                                                                     Qval_rating, Qval_reward,
                                                                     entropy_term, epoch, flag=actor_flag)
 
@@ -947,7 +925,7 @@ with torch.autograd.detect_anomaly():
                         if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
                             wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                     "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                    "actor_loss_reward": a1, "critic_loss_reward": c1,
+                                    "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
                                     "curent_step": total_steps_trained,
                                     "certainty": model.certainty})
 

@@ -311,7 +311,7 @@ def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_M
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
-
+@timeout_decorator.timeout(50)
 def run_OpenCEP(
     exp_name,
     test_name,
@@ -345,24 +345,27 @@ def run_OpenCEP(
     return running_time
 
 
-@timeout_decorator.timeout(10)
-def calc_near_windows(exp_name, index, pattern, pattern_len, max_fine_app, window_size, data_len):
-    reward = 0
+@timeout_decorator.timeout(50)
+def calc_near_windows(exp_name, index, patterns, max_fine_app, data_len):
     jump_val = 5
     near_windows = [index - 2 * jump_val, index - jump_val, index + jump_val, index + 2 * jump_val]
     near_windows = [int(i) for i in near_windows]
     near_windows = list(filter(lambda x: x > 0 and x < data_len - 1, near_windows))
 
+    if not isinstance(patterns, list):
+        patterns = list(patterns)
+    rewards = [0] * len(patterns)
     for ind in [index - 1 , index + 1]:
-        run_OpenCEP(exp_name, str(ind), [pattern])
+        run_OpenCEP(exp_name, str(ind), patterns)
         with open("Data/Matches/{}Matches.txt".format(ind), "r") as f:
             content = f.read()
-            new_reward = int(content.count("\n") / (pattern_len + 1))
-            if new_reward >= max_fine_app:
-                new_reward = 2 * max_fine_app - new_reward
-            reward += new_reward
-
-    return reward / len(near_windows)
+            for pattern_index in range(len(patterns)):
+                new_reward = int(content.count(f"{pattern_index}: "))
+                if new_reward >= max_fine_app:
+                    new_reward = 2 * max_fine_app - new_reward
+                rewards[pattern_index] += new_reward
+    rewards = np.array(rewards) / len(near_windows)
+    return rewards
 
 
 
