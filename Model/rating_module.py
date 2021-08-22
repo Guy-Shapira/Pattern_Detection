@@ -22,7 +22,7 @@ np.random.seed(0)
 np.seterr('raise')
 
 
-SPLIT_1 = 39000
+SPLIT_1 = 0
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
@@ -87,11 +87,11 @@ class ratingPredictor(nn.Module):
 
         weights = torch.ones(MAX_RATING)
 
-        weights[0] = 0.5
-        weights[1] = 0.5
-        weights[2] = 0.5
-        weights[20:30] = torch.tensor([2] * 10)
-        weights[-10:] = torch.tensor([3] * 10)
+        # weights[0] = 0.5
+        # weights[1] = 0.5
+        # weights[2] = 0.5
+        # weights[20:30] = torch.tensor([2] * 10)
+        # weights[-10:] = torch.tensor([3] * 10)
         weights = weights.cuda()
         self.weights = weights
         self.criterion = nn.CrossEntropyLoss(weight=weights)
@@ -107,6 +107,8 @@ class ratingPredictor(nn.Module):
 
         # self._fix_data_balance(first=True)
         self.count = 0
+        self.df_knn_rating = []
+
 
     def label_manually(self, n, weights):
         def del_elements(containter, indexes):
@@ -119,28 +121,33 @@ class ratingPredictor(nn.Module):
                 containter = containter[keep_indexes]
             return containter
         if self.rating_df_unlabeld is None:
-            raise Exception("do unlabeld data!")
+            raise Exception("no unlabeld data!")
         actuall_size = min(n, len(self.rating_df_unlabeld))
         sampled_indexes = random.choices(range(len(self.rating_df_unlabeld)), k=actuall_size, weights=weights)
         values = self.rating_df_unlabeld[sampled_indexes]
         self.rating_df_train = torch.cat([self.rating_df_train, values])
         user_ratings = []
 
+        knn_ratings = np.array(self.df_knn_rating)[sampled_indexes]
+
         if len(self.unlabeld_events) == 0:
             user_ratings = np.array(self.unlabeld_strs)[sampled_indexes]
 
         else:
-            for data, str_pattern, events in zip(values, np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes]):
+            for data, str_pattern, events, knn_rating in zip(values, np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes], knn_ratings):
                 _, res = torch.max(self.predict(data.unsqueeze(0)), dim=1)
-                res = res.item() + 1
+                # res = res.item() + 1
+                res = res.item() 
                 print(f"current prediction: {res}")
                 print(events)
                 print(str_pattern)
                 user_rating = None
                 while user_rating is None:
-                    user_rating = input("enter rating ")
+                    # user_rating = input("enter rating ")
+                    print(f"knn rating: {knn_rating}")
                     try:
-                        user_rating = int(user_rating)
+                        user_rating = knn_rating
+                        # user_rating = int(user_rating)
                     except ValueError:
                         user_rating = int(input("retry: enter rating "))
                 user_ratings.append(user_rating)
@@ -150,6 +157,7 @@ class ratingPredictor(nn.Module):
         self.rating_df_unlabeld = del_elements(self.rating_df_unlabeld, sampled_indexes)
         self.unlabeld_strs = del_elements(self.unlabeld_strs, sampled_indexes)
         self.unlabeld_events = del_elements(self.unlabeld_events, sampled_indexes)
+        self.df_knn_rating = del_elements(self.df_knn_rating, sampled_indexes)
 
         train = data_utils.TensorDataset(self.rating_df_train, self.ratings_col_train)
         self.train_loader = data_utils.DataLoader(train, batch_size=256)
@@ -171,17 +179,22 @@ class ratingPredictor(nn.Module):
         prediction = self.softmax(forward_pass)
         return prediction
 
-    def get_prediction(self, data, data_str, events, balance_flag=False):
+    def get_prediction(self, data, data_str, events, balance_flag=False, knn_rating=None):
         if not balance_flag:
             if self.rating_df_unlabeld is None:
                 self.rating_df_unlabeld = torch.tensor(data.clone().detach())
             else:
+                # print(self.rating_df_unlabeld)
+                # print(data)
                 self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach()
+            
+            if not knn_rating is None:
+                self.df_knn_rating.append(knn_rating)
             try:
                 self.unlabeld_strs.append(data_str)
             except Exception as e:
-                print(type(self.unlabeld_strs))
-                print(self.unlabeld_strs)
+                # print(type(self.unlabeld_strs))
+                # print(self.unlabeld_strs)
                 raise e
 
             self.unlabeld_events.append(events)
@@ -539,13 +552,13 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
                 # return (model_rating + 0.1 * len(events)) * (1.05 ** (epoch + 1)), norm_rating
                 return (model_rating + 0.3 * len(events)), norm_rating
         else:
-            return knn_based_rating(model, events, all_conds, str_pattern, actions)
+            return knn_based_rating(model, events, str_pattern, actions)
     else:
         # return 1, 1 # GPU first test
-        return other_rating(model, events, all_conds, actions)
+        return other_rating(model, events, all_conds, actions, str_pattern)
 
 
-def knn_based_rating(model, events, all_conds, str_pattern, actions):
+def knn_based_rating(model, events, str_pattern, actions):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
 
     predict_pattern = None
@@ -584,7 +597,7 @@ def knn_based_rating(model, events, all_conds, str_pattern, actions):
     return rating, (rating + 1.5) - model.knn_avg
 
 
-def other_rating(model, events, all_conds, actions):
+def other_rating(model, events, all_conds, actions, str_pattern):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
 
     rating = 1
@@ -595,11 +608,15 @@ def other_rating(model, events, all_conds, actions):
         rating += math.pow(0.7, k + 1) * app_count[k] * 1.3
     # if "finish" in events:
     #     rating += 0.5
-    if len(events) > 2 and len(unique) == 1:
-        rating *= 0.5
+    if len(events) == 1:
+        rating *= 0.8
+    # if len(events) > 2 and len(unique) == 1:
+    #     rating *= 0.5
     if len(events) >= 3:
-        rating *= len(events) - 1.5
+        rating *= 1.25
     # rating -= 2
+    if len(str_pattern) < 2:
+        rating /= 5
     return rating, rating
 
 def model_based_rating(model, events, all_conds, str_pattern, actions):
@@ -621,8 +638,8 @@ def model_based_rating(model, events, all_conds, str_pattern, actions):
                 else:
                     predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
-                # self.rating_df_unlabeld = torch.tensor(data)
-            rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events))
+            knn_rating, _ = knn_based_rating(model, events, str_pattern, actions)
+            rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events, knn_rating=knn_rating))
             # print(rating)
 
             # exit()

@@ -17,8 +17,8 @@ from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 
 # from plugin.Football.Football_processed import DataFormatter
-# from plugin.StarPilot.StarPilot_processed import DataFormatter
-from plugin.GPU.GPU_processed import DataFormatter
+from plugin.StarPilot.StarPilot_processed import DataFormatter
+# from plugin.GPU.GPU_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
 
@@ -273,7 +273,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
             )
 
 
-@timeout_decorator.timeout(40)
+# @timeout_decorator.timeout(10)
 def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, conds, all_comps, max_time ):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
@@ -298,11 +298,7 @@ def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, c
         build_formula(bindings, len(bindings), action_types, comp_values, cols_rep, conds, all_comps),
         timedelta(seconds=max_time),
     )
-    # print(all_events)
-    # print(pattern)
-    # if len(all_events) >= 2:
-    #     exit()
-    run_OpenCEP(exp_name, str(index), [pattern])
+    # run_OpenCEP(exp_name, str(index), [pattern])
     return pattern
 
 
@@ -349,7 +345,7 @@ def run_OpenCEP(
     return running_time
 
 
-@timeout_decorator.timeout(60)
+@timeout_decorator.timeout(10)
 def calc_near_windows(exp_name, index, pattern, pattern_len, max_fine_app, window_size, data_len):
     reward = 0
     jump_val = 5
@@ -527,8 +523,8 @@ def replace_values(comp_vals, selected_values):
     new_comp_vals = []
     for val in comp_vals:
         if not val == "nop":
-            new_comp_vals.append(selected_values[count] / 100) #GPU runs!
-            # new_comp_vals.append(selected_values[count]) #non GPU runs!
+            # new_comp_vals.append(selected_values[count] / 100) #GPU runs!
+            new_comp_vals.append(selected_values[count]) #non GPU runs!
             count += 1
         else:
             new_comp_vals.append("nop")
@@ -612,7 +608,7 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
 
 
 
-@timeout_decorator.timeout(60)
+@timeout_decorator.timeout(10)
 def bayesian_function(**values):
     """
     list of values to do bayesian serach on, each value has it's predefined range

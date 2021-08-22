@@ -519,7 +519,7 @@ with torch.autograd.detect_anomaly():
         return actor_loss_1, critic_loss_1
 
     def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
-        run_name = f"GPU data first test"
+        run_name = f"GPU data large test"
         not_finished_count = 0
         run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
@@ -708,6 +708,10 @@ with torch.autograd.detect_anomaly():
                                 # raise(e)
                                 finished_flag = False
                                 not_finished_count += 1
+                                print(e)
+                                str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
+
+                                print(str_pattern)
                                 print("Time out")
 
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
@@ -1037,11 +1041,11 @@ with torch.autograd.detect_anomaly():
         parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
         parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
         parser.add_argument('--max_fine_app', default=150, type=int, help='max appearance of pattnern in a single window')
-        parser.add_argument('--pattern_max_time', default=100, type=int, help='maximum time for pattern (seconds)')
+        parser.add_argument('--pattern_max_time', default=5000, type=int, help='maximum time for pattern (seconds)')
         parser.add_argument('--window_size', default=800, type=int, help='max size of input window')
         parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
         parser.add_argument('--split_factor', default=0.2, type=float, help='split how much train to rating and how much for reward')
-        parser.add_argument('--data_path', default='GPU/full_data_fixed.csv', help='path to data log')
+        parser.add_argument('--data_path', default='GPU/sanity.csv', help='path to data log')
 
         parser.add_argument('--events_path', default='GPU/Events', help='path to list of events')
 

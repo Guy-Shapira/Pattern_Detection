@@ -7,6 +7,7 @@ from copy import deepcopy
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 # warnings.filterwarnings("ignore", category=UserWarning)
+from distutils.util import strtobool
 
 from Model.utils import (
     OpenCEP_pattern,
@@ -93,11 +94,13 @@ with torch.autograd.detect_anomaly():
             init_flag=False,
             hidden_size1=512,
             hidden_size2=2048,
-            exp_name="Football"
+            exp_name="Football",
+            knowledge_flag=True
         ):
             super().__init__()
             # self.lr = lr
             self.exp_name = exp_name
+            self.knowledge_flag = knowledge_flag
             self.actions = [">", "<", "="]
             self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
             self.events = np.loadtxt(events_path, dtype='str')
@@ -135,8 +138,8 @@ with torch.autograd.detect_anomaly():
                                 embeddding_total_size=EMBDEDDING_TOTAL_SIZE
                                 )
 
-            self._create_training_dir(data_path)
-            print("finished training dir creation!")
+            # self._create_training_dir(data_path)
+            # print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -148,7 +151,7 @@ with torch.autograd.detect_anomaly():
             self.max_fine_app = max_fine_app
             self.knn_avg = 0
             self.certainty = 0
-            if not pattern_path == "":
+            if not pattern_path == "" and self.knowledge_flag:
                 self.knn = self._create_df(pattern_path)
             self.max_time = max_time
             self.count = 0
@@ -224,24 +227,25 @@ with torch.autograd.detect_anomaly():
                     with open(f"Processed_knn/{self.pattern_path}/dicts/{file_name}", "r") as read_file:
                         self.list_of_dfs.append(json.load(read_file))
                 df_new = pd.read_csv(f"Processed_knn/{self.pattern_path}/df")
+        
 
-
-            knn = KNN(n_neighbors=5)
+            knn = KNN(n_neighbors=2)
             knn.fit(df_new, df["rating"])
             self.knn_avg = df.rating.mean()
 
             test_pred = ratingPredictor(df_new, df["rating"])
-            self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=1e-4)
-            self.pred_sched = StepLR(self.pred_optim, step_size=3000000, gamma=0.3)
+            self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=3e-5)
+            self.pred_sched = StepLR(self.pred_optim, step_size=2000, gamma=0.85)
 
-            if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-            # if False:
-                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-            else:
-                test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            # TODO: must un-comment!
+            # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+            # # if False:
+            #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+            #     torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            # else:
+            #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
 
-            self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=10, n=0)
+            self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
             print(len(test_pred.ratings_col_train))
             self.pred_pattern = test_pred
@@ -344,7 +348,7 @@ with torch.autograd.detect_anomaly():
                         lines.append(line)
 
                 for i in range(0, len(lines) - self.window_size):
-                    with open(f"Model/training/{self.exp_name}/{i}.txt, "w") as f:
+                    with open(f"Model/training/{self.exp_name}/{i}.txt", "w") as f:
                         for j in range(i, i + self.window_size):
                             f.write(lines[j])
             elif self.exp_name == "StarPilot":
@@ -590,10 +594,15 @@ with torch.autograd.detect_anomaly():
 
         return actor_loss_1, critic_loss_1
 
-    def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
+    def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True, run_name=None):
         # run_name = "second_level_setup_all_lr" + str(model.lr)
-        # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"
-        run_name = f"removed masks"
+        # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
+        new_run_name = f"removed masks"
+
+        if run_name is None:
+            run_name = new_run_name
+        else:
+            run_name = new_run_name + "_" + run_name
         not_finished_count = 0
         run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
@@ -701,6 +710,7 @@ with torch.autograd.detect_anomaly():
                         [],
                         [],
                     )
+                    patterns = []
                     normalize_rating, normalize_reward = [], []
                     # mask = torch.tensor([1.0] * (model.num_events + 1))
                     # if in_round_count % 35 == 0 and epoch < 5:
@@ -746,8 +756,6 @@ with torch.autograd.detect_anomaly():
                                 real_rewards.append(10)
                                 break
                         else:
-                            # mask[-1] *= 1.1
-                            # mask[action] *= 1.25
                             event = new_mapping(action, model.events)
                             events.append(event)
                             mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to, value_reward, value_rating = \
@@ -761,7 +769,6 @@ with torch.autograd.detect_anomaly():
                             log_prob = (log_prob + log.item()) / 2
                             log_probs.append(log_prob)
                             actions.append(mini_actions)
-
 
                             file = os.path.join(absolutePath, "Model", "training", model.exp_name, "{}.txt".format(index))
 
@@ -794,15 +801,17 @@ with torch.autograd.detect_anomaly():
 
                             comp_values.append(comp_vals)
                             finished_flag = True
-                            try:
-                                pattern = OpenCEP_pattern(
-                                    model.exp_name,events, actions, index, comp_values,
-                                     model.cols, all_conds, all_comps, model.max_time
-                                )
-                            except Exception as e:
-                                # timeout error
-                                finished_flag = False
-                                not_finished_count += 1
+                            # try:
+                            pattern = OpenCEP_pattern(
+                                model.exp_name, events, actions, index, comp_values,
+                                    model.cols, all_conds, all_comps, model.max_time
+                            )
+                            patterns.append(pattern)
+                            # except Exception as e:
+                            #     # raise(e)
+                            #     # timeout error
+                            #     finished_flag = False
+                            #     not_finished_count += 1
 
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                             rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
@@ -862,8 +871,9 @@ with torch.autograd.detect_anomaly():
                                     #     break
                                     normalize_reward.append(reward - 20)
                                     #TODO: Remove this!
-                                    # reward *= rating
-                                    reward *= (rating / 5)
+                                    # reward *= (rating / 5)
+                                    reward *= rating
+
                                     rewards.append(reward)
                                     if len(best_found) < 10:
                                         best_found.update({reward: pattern})
@@ -886,7 +896,8 @@ with torch.autograd.detect_anomaly():
                     #     Qval = Qval_reward.detach().cpu().numpy()[0]
                     Qval_rating = Qval_rating.detach().cpu().numpy()[0]
                     Qval_reward = Qval_reward.detach().cpu().numpy()[0]
-
+                    if len(patterns) >= 2:
+                        run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
                     del data
                     gc.collect()
                     if turn_flag == 0:
@@ -966,11 +977,19 @@ with torch.autograd.detect_anomaly():
                             g2['lr'] *= 0.95
                         # continue
                         break
-                    if epoch < 2 and in_round_count in [25, 150, 250, 600, 700]:
+                    step_list = None
+                    if model.knowledge_flag:
+                        step_list = [25, 50]
+                        
+                    else:
+                        # step_list = [25, 150, 250, 600, 700]
+                        step_list = [25, 250, 500]
+
+                    if model.knowledge_flag and in_round_count in step_list:
                         model.pred_pattern.save_all()
                         model.pred_pattern.train()
-                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-4)
-                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=0, retrain=True)
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=25, retrain=True)
 
 
                 rating_groups = [
@@ -1049,164 +1068,6 @@ with torch.autograd.detect_anomaly():
         # return best_res
         return best_res, best_found
 
-
-    # def predict_window(model, i, data):
-    #     data_size = len(data)
-    #     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
-    #     added_info_size_knn = (model.match_max_size + 1) * (6 + 1)
-    #     old_desicions = torch.tensor([0] * added_info_size)
-    #     data2 = torch.cat((data, torch.tensor([0] * added_info_size_knn)), dim=0)
-    #     data = torch.cat((data, old_desicions.float()), dim=0)
-    #     count = 0
-    #     is_done = False
-    #     events = []
-    #     actions, rewards, action_types, all_conds, comp_values, ratings, all_comps = (
-    #         [],
-    #         [],
-    #         [],
-    #         [],
-    #         [],
-    #         [],
-    #         [],
-    #     )
-    #     str_pattern = ""
-    #     mask = torch.tensor([1.0] * (model.num_events + 1))
-    #     pattern = None
-    #     while not is_done:
-    #         action, _, _, _ = model.get_event(data, i, mask.detach())
-    #         data = data.clone()
-    #         data[data_size + count * (model.num_cols + 1)] = model.embedding_desicions(
-    #             torch.tensor(action)
-    #         ).cuda()
-    #         data2[data_size + count * (model.num_cols + 1)] = data[data_size + count * (model.num_cols + 1)]
-    #         count += 1
-    #         if action == model.num_events:
-    #             # mask[-1] = mask[-1].clone() * 1.1
-    #             if len(actions) != 0:
-    #                 ratings = ratings[:-1]
-    #                 data[data_size + count * (model.num_cols + 1)] = torch.tensor(0)
-    #             break
-    #         else:
-    #             mask[action] = mask[action].clone() * 0.3
-    #
-    #             event = new_mapping(action)
-    #             events.append(event)
-    #             mini_actions, _, comp_vals, conds, actions_vals, _, comps = model.get_cols_mini_actions(data.cuda())
-    #             all_comps.append(comps)
-    #             for j, action_val in enumerate(actions_vals):
-    #                 data = data.clone()
-    #                 try:
-    #                     data[data_size + count * (model.num_cols + 1) + j + 1] = model.embedding_actions(
-    #                         torch.tensor(action_val))
-    #                     data2[data_size + count * (model.num_cols + 1) + j + 1] = data[data_size + count * (model.num_cols + 1) + j + 1]
-    #                 except Exception as e:
-    #                     print(f"count {count}, j {j}")
-    #             actions.append(mini_actions)
-    #
-    #             currentPath = pathlib.Path(os.path.dirname(__file__))
-    #             absolutePath = str(currentPath.parent)
-    #             sys.path.append(absolutePath)
-    #             file = os.path.join(absolutePath, "Model", "training", "{}.txt".format(i))
-    #
-    #             # comp_vals = set_values(comp_vals, model.all_cols, mini_actions, event, conds, file)
-    #             all_conds.append(conds)
-    #
-    #
-    #             if comp_vals.count("nop") != len(comp_vals):
-    #                 # bayesian_dict = set_values_bayesian(comp_vals, model.all_cols, mini_actions, event, all_conds, file)
-    #                 bayesian_dict = set_values_bayesian(comp_vals,
-    #                     model.all_cols, mini_actions, event,
-    #                     all_conds, file, model.max_values_bayes,
-    #                      model.min_values_bayes
-    #                  )
-    #                 store_to_file(events, actions, i, comp_values, model.cols, all_conds, comp_vals, all_comps)
-    #                 b_optimizer = BayesianOptimization(
-    #                     f=bayesian_function,
-    #                     pbounds=bayesian_dict,
-    #                     random_state=1,
-    #                 )
-    #                 try:
-    #                     b_optimizer.maximize(
-    #                         init_points=5,
-    #                         n_iter=3,
-    #                     )
-    #
-    #                     selected_values = list(b_optimizer.max['params'].values())
-    #                 except Exception as e:
-    #                     print(bayesian_dict)
-    #                     selected_values = [max(model.normailze_values) for _ in range(len(bayesian_dict))]
-    #                 comp_vals = replace_values(comp_vals, selected_values)
-    #
-    #             comp_values.append(comp_vals)
-    #             # all_conds.append(conds)
-    #             pattern = OpenCEP_pattern(
-    #                 events, actions, i, comp_values, model.cols, all_conds, all_comps
-    #             )
-    #             eff_pattern = pattern.condition
-    #             with open("Data/Matches/{}Matches.txt".format(i), "r") as f:
-    #                 pattern_copy = (data[-added_info_size:]).detach().cpu().numpy().reshape(1,-1)
-    #                 rating = model.knn.predict(pattern_copy).item()
-    #
-    #                 reward = int(f.read().count("\n") / (len(actions) + 1))
-    #                 if 1:
-    #                     reward *= rating
-    #                     ratings.append(rating)
-    #                     rewards.append(reward)
-    #                     sys.stdout.write(f"Knn out: {rating}\n")
-    #                 str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-    #             if count >= model.match_max_size:
-    #                 is_done = True
-    #
-    #     if len(ratings) == 0:
-    #         return [], [], -1, " "
-    #     else:
-    #         events_ball = [4 if event in [4,8,10] else event for event in events]
-    #         if len(np.unique(events_ball)) == 1:
-    #             ratings[-1] = 0
-    #         return events, data[-added_info_size:], ratings[-1], str_pattern
-    #
-    #
-    # def predict_patterns(model):
-    #     def choose_best_pattern(patterns, ratings):
-    #         def similar(a, b):
-    #             return SequenceMatcher(None, a, b).ratio()
-    #
-    #         results = [0.0] * len(ratings)
-    #         for i in range(0, len(ratings) - 1):
-    #             for j in range(i, len(events)):
-    #                 sim = similar(patterns[i], patterns[j])
-    #                 results[i] += sim
-    #                 results[j] += sim
-    #         results = torch.tensor(results) * torch.tensor(ratings)
-    #         print(f"The similarities are:{results}")
-    #
-    #         best_index = np.argmax(results)
-    #         return best_index, results[best_index]
-    #
-    #     model.eval()
-    #     events = []
-    #     patterns = []
-    #     ratings = []
-    #     pattern_strs = []
-    #     # types = [] Todo: do this also
-    #     for i, data in enumerate(model.data[-100:]):
-    #         event, pattern, rating, pattern_str = predict_window(model, i, data)
-    #         if len(event) != 0:
-    #             # event = [str(val) for val in event]
-    #             events.append(event)
-    #             pattern = ",".join([str(i) for i in pattern])
-    #             patterns.append(pattern)
-    #             ratings.append(rating)
-    #             pattern_strs.append(pattern_str)
-    #
-    #
-    #     print("Looking for most similar\n")
-    #     best_index, best_sim = choose_best_pattern(patterns, ratings)
-    #     print(best_sim)
-    #     print(events[best_index])
-    #     print(pattern_strs[best_index])
-
-
     def is_pareto_efficient(costs):
         """
         Find the pareto-efficient points
@@ -1237,38 +1098,63 @@ with torch.autograd.detect_anomaly():
         first = True
         suggested_models = []
         all_patterns = []
-        split_factor = args.split_factor
-        for window_size in [args.window_size]:
-            # eff_split_factor = split_factor / 100
-            global class_inst
-            class_inst = ruleMiningClass(data_path=args.data_path,
-                                        pattern_path=args.pattern_path,
-                                        events_path=args.events_path,
-                                        num_events=args.num_events,
-                                        match_max_size=args.max_size,
-                                        window_size=window_size,
-                                        max_fine_app=args.max_fine_app,
-                                        max_values=max_vals,
-                                        normailze_values=norm_vals,
-                                        all_cols=all_cols,
-                                        eff_cols=eff_cols,
-                                        max_time=args.pattern_max_time,
-                                        lr_actor=args.lr_actor,
-                                        lr_critic=args.lr_critic,
-                                        hidden_size1=args.hidden_size1,
-                                        hidden_size2=args.hidden_size2,
-                                        exp_name=args.exp_name,
-                                        init_flag=True)
+        global class_inst
+        class_inst = ruleMiningClass(data_path=args.data_path,
+                                    pattern_path=args.pattern_path,
+                                    events_path=args.events_path,
+                                    num_events=args.num_events,
+                                    match_max_size=args.max_size,
+                                    window_size=args.window_size,
+                                    max_fine_app=args.max_fine_app,
+                                    max_values=max_vals,
+                                    normailze_values=norm_vals,
+                                    all_cols=all_cols,
+                                    eff_cols=eff_cols,
+                                    max_time=args.pattern_max_time,
+                                    lr_actor=args.lr_actor,
+                                    lr_critic=args.lr_critic,
+                                    hidden_size1=args.hidden_size1,
+                                    hidden_size2=args.hidden_size2,
+                                    exp_name=args.exp_name,
+                                    init_flag=True,
+                                    knowledge_flag=args.early_knowledge)
 
-            # check_predictor(class_inst)
+        print("Finished creating Training model")
+        if not args.early_knowledge: # pre-training is needed
+            pretrain_inst = ruleMiningClass(data_path=args.data_path,
+                pattern_path=args.pattern_path,
+                events_path=args.events_path,
+                num_events=args.num_events,
+                match_max_size=args.max_size,
+                window_size=args.window_size,
+                max_fine_app=args.max_fine_app,
+                max_values=max_vals,
+                normailze_values=norm_vals,
+                all_cols=all_cols,
+                eff_cols=eff_cols,
+                max_time=args.pattern_max_time,
+                lr_actor=args.lr_actor,
+                lr_critic=args.lr_critic,
+                hidden_size1=args.hidden_size1,
+                hidden_size2=args.hidden_size2,
+                exp_name=args.exp_name,
+                init_flag=True)
+            print("Finished creating Knowledge model")
 
-            if 1:
-                result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=split_factor, rating_flag=rating_flag)
-                all_patterns.append(patterns)
-                cuda_handle.empty_cache()
-                print(patterns)
-                results.update({split_factor: result})
-                suggested_models.append({split_factor: class_inst})
+            train(pretrain_inst, num_epochs=4, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model")
+            #copy rating modle to trainable model
+            class_inst.certainty = pretrain_inst.certainty
+            class_inst.pred_pattern = pretrain_inst.pred_pattern
+            class_inst.knn = pretrain_inst.knn
+            class_inst.list_of_dfs = pretrain_inst.list_of_dfs
+        # train working model
+        result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model")
+        all_patterns.append(patterns)
+        cuda_handle.empty_cache()
+        print(patterns)
+        results.update({split_factor: result})
+        suggested_models.append({split_factor: class_inst})
+
 
         if 0:
             print(results)
@@ -1322,6 +1208,11 @@ with torch.autograd.detect_anomaly():
         parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
         parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
         parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
+        # parser.add_argument('--early_knowledge', default = True, type=bool, help="indication if expert knowledge is available")
+        parser.add_argument('--early_knowledge', dest='early_knowledge', 
+                    type=lambda x: bool(strtobool(x)), 
+                    default = True, help="indication if expert knowledge is available")
+
         parser.add_argument('--exp_name', default = 'StarPilot', type=str)
         torch.set_num_threads(50)
         main(parser)
