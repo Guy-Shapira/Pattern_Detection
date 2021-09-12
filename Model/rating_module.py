@@ -10,6 +10,8 @@ import random
 import matplotlib.pyplot as plt
 import copy
 import os
+import timeit
+
 
 PATTERN_LEN = 40
 MAX_RATING = 50
@@ -23,6 +25,7 @@ np.seterr('raise')
 
 
 SPLIT_1 = 0
+# SPLIT_1 = 20000
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
@@ -138,13 +141,13 @@ class ratingPredictor(nn.Module):
                 _, res = torch.max(self.predict(data.unsqueeze(0)), dim=1)
                 # res = res.item() + 1
                 res = res.item() 
-                print(f"current prediction: {res}")
-                print(events)
-                print(str_pattern)
+                # print(f"current prediction: {res}")
+                # print(events)
+                # print(str_pattern)
                 user_rating = None
                 while user_rating is None:
                     # user_rating = input("enter rating ")
-                    print(f"knn rating: {knn_rating}")
+                    # print(f"knn rating: {knn_rating}")
                     try:
                         user_rating = knn_rating
                         # user_rating = int(user_rating)
@@ -257,9 +260,6 @@ class ratingPredictor(nn.Module):
                         self.weights[i] -= 0.1
                     elif value > 0.8:
                         self.weights[i] += 0.2
-                # print(f"Mistakes %: {self.mistake_acc}")
-                # print(f"Train Avg distance {distance / len(self.train_loader)}")
-                # print(f" Train acc = {acc}")
 
             return acc
 
@@ -307,10 +307,8 @@ class ratingPredictor(nn.Module):
         acc = correct / count_all
         if total_count % 25 == 0:
             acc = 1 - (sum(mistake_histogram) / sum(lens_array))
-            print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
-            mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
-            # print(f"Mistakes: {mistake_histogram}")
-            # print(f"Mistakes %: {mistake_acc}")
+            # print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
+            # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
 
         if not self.rating_df_unlabeld is None:
             all_outputs = None
@@ -517,9 +515,9 @@ class ratingPredictor(nn.Module):
         new_split_samples = _over_sampeling(flatten, split_samples)
         if not new_split_samples is None:
             split_samples = new_split_samples
-        new_split_samples = _under_sampeling(split_samples)
-        if not new_split_samples is None:
-            split_samples = new_split_samples
+        # new_split_samples = _under_sampeling(split_samples)
+        # if not new_split_samples is None:
+        #     split_samples = new_split_samples
         lens_array = np.array([len(i) for i in split_samples])
 
         print(lens_array)
@@ -560,7 +558,7 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
 
 def knn_based_rating(model, events, str_pattern, actions):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
-
+    
     predict_pattern = None
     try:
         # for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
@@ -603,11 +601,25 @@ def other_rating(model, events, all_conds, actions, str_pattern):
     rating = 1
     if "=" in flatten(all_conds):
         rating *= 1.2
-    unique, app_count = np.unique(events, return_counts=True)
-    for k in range(len(unique)):
-        rating += math.pow(0.7, k + 1) * app_count[k] * 1.3
-    # if "finish" in events:
-    #     rating += 0.5
+
+    if model.exp_name == "GPU":
+        servers = [int(server.split("_")[0]) for server in events]
+        unique, app_count = np.unique(servers, return_counts=True)
+        if len(events) >= 2 and len(unique) == 1:
+            rating += 0.5 * len(events)
+        for k in range(len(unique)):
+            rating += math.pow(0.7, k + 1) * app_count[k] * 1.5
+        
+
+    else:
+        unique, app_count = np.unique(events, return_counts=True)
+        for k in range(len(unique)):
+            rating += math.pow(0.7, k + 1) * app_count[k] * 1.3
+        # if "finish" in events:
+        #     rating += 0.5
+        if len(str_pattern) < 2:
+            rating /= 5
+        
     if len(events) == 1:
         rating *= 0.8
     # if len(events) > 2 and len(unique) == 1:
@@ -615,8 +627,6 @@ def other_rating(model, events, all_conds, actions, str_pattern):
     if len(events) >= 3:
         rating *= 1.25
     # rating -= 2
-    if len(str_pattern) < 2:
-        rating /= 5
     return rating, rating
 
 def model_based_rating(model, events, all_conds, str_pattern, actions):
@@ -638,11 +648,14 @@ def model_based_rating(model, events, all_conds, str_pattern, actions):
                 else:
                     predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
+            start_time = timeit.default_timer()
             knn_rating, _ = knn_based_rating(model, events, str_pattern, actions)
+            knn_time = timeit.default_timer() - start_time
+            start_time = timeit.default_timer()
             rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events, knn_rating=knn_rating))
-            # print(rating)
+            model_time = timeit.default_timer() - start_time
+            # print(f"\nKNN time: {knn_time} Model time: {model_time}, Total time: {knn_time + model_time}\n")
 
-            # exit()
         except Exception as e:
             raise e
     rating += 1

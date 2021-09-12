@@ -73,7 +73,6 @@ def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_tar
     Creates a single condition in the formula of the pattern
     :param bindings: All bindings (events as symbols) remining
     :param curr_len: the match number of events
-
     :param action_type: current action type (comparison with next, comparison with value, ect.)
     :param value: current the values to compare with
     :param attribute: system attribute to create a condition in
@@ -274,7 +273,7 @@ def build_formula(bindings, curr_len, action_types, comp_values, cols, conds, al
 
 
 # @timeout_decorator.timeout(10)
-def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, conds, all_comps, max_time ):
+def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, conds, all_comps, max_time):
     """
     Auxiliary function for running the CEP engine, build the pattern anc calls run_OpenCEP
     :param exp_name: the name of dataset used for the model
@@ -289,7 +288,7 @@ def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, c
     :return: the condition of the pattern created
     """
     cols_rep = []
-    [cols_rep.append(cols) for i in range(len(actions))]
+    [cols_rep.append(cols) for _ in range(len(actions))]
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
     action_types = np.array(action_types)
     all_events = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
@@ -311,7 +310,7 @@ def after_epoch_test(pattern, eval_mechanism_params=DEFAULT_TESTING_EVALUATION_M
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
     return running_time
 
-@timeout_decorator.timeout(50)
+@timeout_decorator.timeout(75)
 def run_OpenCEP(
     exp_name,
     test_name,
@@ -362,9 +361,10 @@ def calc_near_windows(exp_name, index, patterns, max_fine_app, data_len):
             for pattern_index in range(len(patterns)):
                 new_reward = int(content.count(f"{pattern_index}: "))
                 if new_reward >= max_fine_app:
-                    new_reward = 2 * max_fine_app - new_reward
+                    new_reward = max(0, 2 * max_fine_app - new_reward)
                 rewards[pattern_index] += new_reward
-    rewards = np.array(rewards) / len(near_windows)
+    # rewards = np.array(rewards) / len(near_windows)
+    rewards = np.array(rewards) / 2
     return rewards
 
 
@@ -382,6 +382,8 @@ def new_mapping(event, events, reverse=False):
         # print(np.where(events == int(event))[0])
         # print(np.where(events == int(event))[0][0])
         # return (np.where(events == int(event))[0][0]) # Football
+        # print(event)
+        # print(events)
         return (np.where(np.array(events) == event)[0][0])  # StarPilot & GPU
 
     else:
@@ -611,7 +613,7 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
 
 
 
-@timeout_decorator.timeout(10)
+@timeout_decorator.timeout(20)
 def bayesian_function(**values):
     """
     list of values to do bayesian serach on, each value has it's predefined range

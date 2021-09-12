@@ -96,8 +96,8 @@ with torch.autograd.detect_anomaly():
             self.actions = [">", "<", "="]
             self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
             self.events = np.loadtxt(events_path, dtype='str')
-            if self.exp_name == "GPU":
-                self.events = [int(event) for event in self.events]
+            # if self.exp_name == "GPU":
+            #     self.events = [int(event) for event in self.events]
             self.num_events = len(self.events)
             self.match_max_size = match_max_size
             self.max_values = max_values
@@ -272,8 +272,10 @@ with torch.autograd.detect_anomaly():
                         else:
                             index = -1
                         event = values[index]
-                        if self.exp_name == "GPU":
-                            event = int(event)
+                        # if self.exp_name == "GPU":
+                            # print(values)
+                            # print(event)
+                            # event = int(event)
                         event = self.embedding_events(torch.tensor(int(new_mapping(event, self.events, reverse=True))))
                         if self.exp_name == "Football":
                             values = values[2:] # skip sid and ts
@@ -481,7 +483,8 @@ with torch.autograd.detect_anomaly():
             Returns the L1 penalty of the params.
             """
             l1_norm = sum(log_prob.abs().sum() for log_prob in log_probs)
-            return l1_lambda*l1_norm / len(log_probs)
+            return l1_lambda * l1_norm / len(log_probs)
+            
         Qvals_reward = np.zeros_like(values_reward)
         Qvals_rating = np.zeros_like(values_rating)
         for t in reversed(range(len(rewards))):
@@ -509,6 +512,8 @@ with torch.autograd.detect_anomaly():
         actor_loss = actor_loss.cuda()
         critic_loss_1 = critic_loss.cpu().detach().numpy()
         critic_loss = critic_loss.cuda()
+
+
         if flag:
             actor_loss.backward()
             policy_network.actor_optimizer.step()
@@ -519,7 +524,7 @@ with torch.autograd.detect_anomaly():
         return actor_loss_1, critic_loss_1
 
     def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
-        run_name = f"GPU data large test"
+        run_name = f"GPU data large test, even more cols, hyperparams fitted"
         not_finished_count = 0
         run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
@@ -591,10 +596,8 @@ with torch.autograd.detect_anomaly():
                     total_count += 1
                     in_round_count += 1
                     data = model.data[index]
-                    data_size = len(data)
                     old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
                     count = 0
-                    best_reward = 0.0
                     pbar.update(n=1)
                     is_done = False
                     events = []
@@ -614,6 +617,8 @@ with torch.autograd.detect_anomaly():
                         [],
                         [],
                     )
+                    patterns, special_reward = [] , []
+
                     normalize_rating, normalize_reward = [], []
                     if total_count % 250 == 0 and training_factor > 0.3:
                         training_factor /= 1.2
@@ -641,16 +646,17 @@ with torch.autograd.detect_anomaly():
                             log_probs.append(log_prob)
 
                             if len(actions) == 0:
-                                rewards.append(-1.5)
-                                real_rewards.append(-1.5)
+                                # rewards.append(-1.5)
+                                # real_rewards.append(-1.5)
+                                special_reward.append(-1.5)
+                                break
                             else:
-                                add_reward = 0
-                                if min(real_rewards) > 0:
-                                    add_reward = max(real_rewards)
-                                rewards.append(add_reward)
-                                real_rewards.append(add_reward)
+                                # rewards.append(10)
+                                # real_rewards.append(10)
+                                special_reward.append(10)
                                 break
                         else:
+                            special_reward.append(None)
                             event = new_mapping(action, model.events)
                             events.append(event)
                             mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to, value_reward, value_rating = \
@@ -697,22 +703,23 @@ with torch.autograd.detect_anomaly():
 
                             comp_values.append(comp_vals)
                             finished_flag = True
-                            try:
-                                pattern = OpenCEP_pattern(
-                                    model.exp_name, events, actions, index, comp_values,
-                                     model.cols, all_conds, all_comps, model.max_time
-                                )
-                            except Exception as e:
-                                # timeout error
-                                print(e)
-                                # raise(e)
-                                finished_flag = False
-                                not_finished_count += 1
-                                print(e)
-                                str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
+                            # try:
+                            pattern = OpenCEP_pattern(
+                                model.exp_name, events, actions, index, comp_values,
+                                    model.cols, all_conds, all_comps, model.max_time
+                            )
+                            patterns.append(pattern)
+                            # except Exception as e:
+                            #     # timeout error
+                            #     print(e)
+                            #     # raise(e)
+                            #     finished_flag = False
+                            #     not_finished_count += 1
+                            #     print(e)
+                            #     str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
 
-                                print(str_pattern)
-                                print("Time out")
+                            #     print(str_pattern)
+                            #     print("Time out")
 
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                             rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
@@ -723,6 +730,37 @@ with torch.autograd.detect_anomaly():
                             ratings.append(rating)
                             normalize_rating.append(norm_rating)
 
+
+                        if count >= model.match_max_size:
+                            is_done = True
+
+                    # after loop ended- calc reward for all patterns and update policy
+                    try:
+                        run_OpenCEP(exp_name="GPU", test_name=index, patterns=patterns)
+
+                    except Exception as e:
+                        # raise(e)
+                        # timeout error
+                        finished_flag = False
+                        not_finished_count += 1
+
+                    content = None
+                    try:
+                        with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+                            content = f.read()
+                    except Exception as e:
+                        print(e)
+                        # Probably becasue of not finished pattern case
+                        content = None
+                    
+                    for pattern_index, pattern_rating in enumerate(ratings):
+                        sp_rew = special_reward[pattern_index]
+                        if not sp_rew is None:
+                            rewards.append(sp_rew)
+                            real_rewards.append(sp_rew)
+                            normalize_reward.append(sp_rew - 20)
+
+                        else:
                             if not finished_flag:
                                 reward = -5
                                 rewards.append(reward)
@@ -730,66 +768,44 @@ with torch.autograd.detect_anomaly():
                                 normalize_reward.append(reward - 20)
                                 is_done = True
                             else:
-                                eff_pattern = pattern.condition
+                                original_reward = int(content.count(f"{pattern_index}: "))
+                                reward = original_reward
+                                if reward >= model.max_fine_app:
+                                    reward = max(0, 2 * model.max_fine_app - reward)
+                                    # input("wait!")
+                                real_rewards.append(reward)
+                                normalize_reward.append(reward - 20)
 
-                                with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
-                                    # input(f" current file: {index} wait what de fuck")
-                                    content = f.read()
-                                    reward = int(content.count("\n") / (len(actions) + 1))
-                                    if reward >= model.max_fine_app:
-                                        reward = 2 * model.max_fine_app - reward
-                                    global EMBDEDDING_TOTAL_SIZE
-                                    if reward != 0:
-                                        try:
-                                            if model.exp_name == "StarPilot":
-                                                first_ts = content.split("\n")[0].split("ts\': ")[1].split(",")[0]
-                                            else:
-                                                first_ts = content.split("\n")[0].split("Timestamp\': ")[1].split(",")[0]
-                                            with open(file, "r") as data_file:
-                                                content = data_file.read()
-                                            lines = content.split("\n")
-                                            row_idx = 0
-                                            for num, line in enumerate(lines):
-                                                if line.startswith(first_ts):
-                                                    row_idx = num
-                                                    break
-                                            chunk_size = EMBDEDDING_TOTAL_SIZE * row_idx
-                                            set_data = torch.tensor([i for i in data])
-                                            set_data[: chunk_size] = torch.tensor([PAD_VALUE] * chunk_size)
-                                        except Exception as e:
-                                            print(e)
-                                            print(f"Reward : {reward}")
-                                            raise(e)
+                    try:
+                        if finished_flag:
+                            near_windows_rewards = calc_near_windows(model.exp_name, index, patterns,
+                                model.max_fine_app, data_len)
 
-                                    try:
-                                        near_windows_rewards = calc_near_windows(model.exp_name, index, pattern, len(actions),
-                                            model.max_fine_app, model.window_size, data_len)
-                                        reward = reward * 0.75 + near_windows_rewards * 0.25
+                            for pattern_index, pattern_rating in enumerate(ratings):
+                                sp_rew = special_reward[pattern_index]
+                                if sp_rew is None:
+                                    reward = real_rewards[pattern_index] * 0.75 + near_windows_rewards[pattern_index] * 0.25
 
-                                    except Exception as e:
-                                        print(e)
-                                        # raise(e)
-                                        pass
-                                    real_rewards.append(reward)
-                                    # input(f"current file: {index} step: {len(actions)} reward: {reward}")
+                                    reward *= pattern_rating
 
-                                    normalize_reward.append(reward - 20)
-                                    #TODO: Remove this!
-                                    # reward *= rating
-                                    # reward *= (rating / 5)
-                                    reward *= rating
                                     rewards.append(reward)
-                                    if len(best_found) < 10:
+                                if len(best_found) < 10:
+                                    best_found.update({reward: pattern})
+                                else:
+                                    worst_reward = sorted(list(best_found.keys()))[0]
+                                    if reward > worst_reward:
+                                        del best_found[worst_reward]
                                         best_found.update({reward: pattern})
-                                    else:
-                                        worst_reward = sorted(list(best_found.keys()))[0]
-                                        if reward > worst_reward:
-                                            del best_found[worst_reward]
-                                            best_found.update({reward: pattern})
 
+                    except Exception as e:
+                        print(e)
+                        # raise e
+                        if not finished_flag:
+                            continue
+                        else:
+                            rewards = [pattern_rating * real_rew for pattern_rating, real_rew in zip(ratings, real_rewards)]
 
-                        if count >= model.match_max_size:
-                            is_done = True
+                        
 
                     _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), training_factor=training_factor)
                     Qval_rating = Qval_rating.detach().cpu().numpy()[0]
@@ -805,69 +821,75 @@ with torch.autograd.detect_anomaly():
                     actor_flag = False
                     if count_actor < 100:
                         actor_flag = True
-                        count_actor += 1
-                    elif count_critic < 250:
-                        count_critic += 1
+                        count_actor += len(ratings)
+                    elif count_critic < 500:
+                        count_critic += len(ratings)
                     else:
                         count_actor = 0
                         count_critic = 0
-                    a1, c1  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
-                                                                    Qval_rating, Qval_reward,
-                                                                    entropy_term, epoch, flag=actor_flag)
 
 
                     index_max = np.argmax(rewards)
-                    all_ratings.append(np.sum(ratings))
-                    all_rewards.append(rewards[index_max])
-                    numsteps.append(len(actions))
-                    avg_numsteps.append(np.mean(numsteps))
-                    mean_rewards.append(np.mean(all_rewards))
-                    max_rating.append(np.max(ratings))
-                    real.append(real_rewards[index_max])
-                    rating_plot.append(ratings[index_max])
-                    mean_real.append(np.mean(real_rewards))
-                    # print(f"Real rewards: {real_rewards}")
-                    if True:
-                        sys.stdout.write(
-                            "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
-                                real_rewards[index_max],
-                                ratings[index_max],
-                                np.max(ratings),
-                                sum([t != "nop" for sub in comp_values for t in sub]),
+                    if total_steps_trained > 2500 and real_rewards[index_max] <= 0:
+                        continue 
+
+                    else:
+                        a1, c1  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
+                                                                    Qval_rating, Qval_reward,
+                                                                    entropy_term, epoch, flag=actor_flag)
+
+                        # index_max = np.argmax(rewards)
+                        all_ratings.append(np.sum(ratings))
+                        all_rewards.append(rewards[index_max])
+                        numsteps.append(len(actions))
+                        avg_numsteps.append(np.mean(numsteps))
+                        mean_rewards.append(np.mean(all_rewards))
+                        max_rating.append(np.max(ratings))
+                        real.append(real_rewards[index_max])
+                        rating_plot.append(ratings[index_max])
+                        mean_real.append(np.mean(real_rewards))
+                        # print(f"Real rewards: {real_rewards}")
+                        if True:
+                            sys.stdout.write(
+                                "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
+                                    real_rewards[index_max],
+                                    ratings[index_max],
+                                    np.max(ratings),
+                                    sum([t != "nop" for sub in comp_values for t in sub]),
+                                )
                             )
-                        )
-                        if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
-                            wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
-                                    "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                    "actor_loss": a1, "critic_loss": c1,
-                                    "curent_step": total_steps_trained})
+                            if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
+                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                        "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                        "actor_loss": a1, "critic_loss": c1,
+                                        "curent_step": total_steps_trained})
 
-                        # if total_steps_trained > 4500:
-                        #     # Only for sweeps!
-                        #     return None, None
+                            # if total_steps_trained > 4500:
+                            #     # Only for sweeps!
+                            #     return None, None
 
 
-                        str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
-                        comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
-                        sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
-                        sys.stdout.write(
-                            "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
-                                in_round_count,
-                                index,
-                                np.round(rewards[index_max], decimals=3),
-                                np.round(np.mean(all_rewards), decimals=3),
-                                index_max + 1,
+                            str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
+                            comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
+                            sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
+                            sys.stdout.write(
+                                "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
+                                    in_round_count,
+                                    index,
+                                    np.round(rewards[index_max], decimals=3),
+                                    np.round(np.mean(all_rewards), decimals=3),
+                                    index_max + 1,
+                                )
                             )
-                        )
-                    config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
-                    if model.count > 100:
-                        print("\n\n\n---- Stopping early because of low log ----\n\n\n")
-                        model.count = 0
-                        for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
-                            g1['lr'] *= 0.95
-                            g2['lr'] *= 0.95
-                        # continue
-                        break
+                        config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
+                        if model.count > 100:
+                            print("\n\n\n---- Stopping early because of low log ----\n\n\n")
+                            model.count = 0
+                            for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
+                                g1['lr'] *= 0.95
+                                g2['lr'] *= 0.95
+                            # continue
+                            break
 
                 rating_groups = [
                     np.mean(rating_plot[t : t + GRAPH_VALUE])
@@ -1035,12 +1057,12 @@ with torch.autograd.detect_anomaly():
         parser = argparse.ArgumentParser(description='CEP pattern miner')
         parser.add_argument('--bs', default=250, type=int, help='batch size')
         parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
-        parser.add_argument('--lr_actor', default=5e-9, type=float, help='starting learning rate for actor')
-        parser.add_argument('--lr_critic', default=5e-7, type=float, help='starting learning rate for critic')
-        parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
-        parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
+        parser.add_argument('--lr_actor', default=5e-8, type=float, help='starting learning rate for actor')
+        parser.add_argument('--lr_critic', default=5e-5, type=float, help='starting learning rate for critic')
+        parser.add_argument('--hidden_size1', default=2048, type=int, help='hidden_size param for model')
+        parser.add_argument('--hidden_size2', default=4096, type=int, help='hidden_size param for model')
         parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
-        parser.add_argument('--max_fine_app', default=150, type=int, help='max appearance of pattnern in a single window')
+        parser.add_argument('--max_fine_app', default=500, type=int, help='max appearance of pattnern in a single window')
         parser.add_argument('--pattern_max_time', default=5000, type=int, help='maximum time for pattern (seconds)')
         parser.add_argument('--window_size', default=800, type=int, help='max size of input window')
         parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
@@ -1052,10 +1074,11 @@ with torch.autograd.detect_anomaly():
 
         parser.add_argument('--pattern_path', default='', help='path to known patterns')
         parser.add_argument('--final_data_path', default='', help='path to next level data')
-        parser.add_argument('--max_vals', default = "10570.0, 390.99, 246.81, 250.25, 10544.0, 415.56, 245.21, 251.9, 10964.0, 382.53, 220.62, 247.52, 10982.0, 390.3, 218.825, 245.96, 10980.0, 386.36, 209.95, 246.64, 11004.0, 375.14, 231.67, 248.29, 11002.0, 410.72, 222.85, 248.08, 10982.0, 414.95, 216.07, 245.76", type=str, help="max values in columns")
+        parser.add_argument('--max_vals', default = "10983.0, 394.68, 246.65, 250.25, 10544.0, 417.02, 245.05, 250.03, 10964.0, 403.4, 225.97, 247.86, 10982.0, 454.49, 218.825, 247.21, 10980.0, 386.36, 212.3, 246.64, 11004.0, 395.08, 231.37, 248.14, 11002.0, 410.72, 225.375, 247.55, 10982.0, 414.95, 222.93, 248.31", type=str, help="max values in columns")
         parser.add_argument('--norm_vals', default = "1.0, 19.02, 18.17, 0.0, 1.0, 11.13, 10.29, 0.0, 1.0, 10.25, 9.93, 0.0, 1.0, 7.36, 7.12, 0.0, 1.0, 8.59, 8.04, 0.0, 1.0, 8.36, 7.7, 0.0, 1.0, 7.01, 6.91, 0.0, 1.0, 1.16, 0.91, 0.0", type=str, help="normalization values in columns")
 
-        parser.add_argument('--all_cols','--list',  default = "FB Memory Usage Used GPU_0,Power Samples Max GPU_0,"\
+        parser.add_argument('--all_cols','--list',
+                  default = "FB Memory Usage Used GPU_0,Power Samples Max GPU_0,"\
                             "Power Samples Min GPU_0,Power Samples Avg GPU_0,"\
                             "FB Memory Usage Used GPU_1,Power Samples Max GPU_1,"\
                             "Power Samples Min GPU_1,Power Samples Avg GPU_1,"\
@@ -1073,9 +1096,12 @@ with torch.autograd.detect_anomaly():
                             "Power Samples Min GPU_7,Power Samples Avg GPU_7", 
                             type=str, help="all cols in data")
 
-        parser.add_argument('--eff_cols','--list1', default = "FB Memory Usage Used GPU_0,Power Samples Max GPU_0,"\
-                "Power Samples Min GPU_0,Power Samples Avg GPU_0", 
+        parser.add_argument('--eff_cols','--list1', default = "FB Memory Usage Used GPU_0,Power Samples Max GPU_0,Power Samples Avg GPU_0,"\
+                "FB Memory Usage Used GPU_1,Power Samples Max GPU_1,Power Samples Avg GPU_1,"\
+                "FB Memory Usage Used GPU_2,Power Samples Max GPU_2,Power Samples Avg GPU_2,"\
+                "FB Memory Usage Used GPU_3,Power Samples Max GPU_3,Power Samples Avg GPU_3,"\
+                "FB Memory Usage Used GPU_4,Power Samples Max GPU_4,Power Samples Avg GPU_4", 
                 type=str, help="all cols in data")
         parser.add_argument('--exp_name', default = 'GPU', type=str)
-        torch.set_num_threads(50)
+        torch.set_num_threads(60)
         main(parser)
