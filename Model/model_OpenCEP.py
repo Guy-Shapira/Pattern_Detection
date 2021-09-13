@@ -529,11 +529,12 @@ def update_policy(policy_network, ratings, rewards, log_probs, values_rating, va
 
     return actor_loss_1, critic_loss_1
 
-def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True, run_name=None, pretrain_flag=False):
+def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True, run_name=None, pretrain_flag=False, wandb_name=""):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
     # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
     new_run_name = f"removed masks"
-    org_run_name = deepcopy(run_name)
+    run_type = (run_name == 'gain_knowledge_model')
+
     if run_name is None:
         run_name = new_run_name
     else:
@@ -550,6 +551,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     config.num_epochs = num_epochs
     config.split_factor = split_factor
     config.total_number_of_steps = total_steps_trained
+    config.name = wandb_name
 
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
 
@@ -569,8 +571,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     )
     max_rating = []
     entropy_term, turn_flag = 0, 0
-    # training_factor = 0.8
-    training_factor = 0.0
+    training_factor = 0.8
+    # training_factor = 0.0
     switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
     total_count = -5
@@ -599,7 +601,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
             data_len = len(os.listdir(path))
             for index in range(epoch + 2, min(data_len - 2, len(model.data)), data_len // bs):
                 set_data = None
-                index = 288
                 if total_count >= bs:
                     total_count = 0
                     turn_flag = 1 - turn_flag
@@ -640,7 +641,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 # mask = torch.tensor([1.0] * (model.num_events + 1))
                 # if in_round_count % 35 == 0 and epoch < 5:
                 #     temper /= 1.05
-                if total_count % 250 == 0 and training_factor > 0.3:
+                # if total_count % 250 == 0 and training_factor > 0.3:
+                if total_count % 250:
                     training_factor /= 1.2
                 while not is_done:
                     if not set_data is None:
@@ -750,29 +752,36 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     not_finished_strs.append(str_pattern)
                     not_finished_count += 1
 
-                with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
-                    content = f.read()
-                    for pattern_index, pattern_rating in enumerate(ratings):
-                        sp_rew = special_reward[pattern_index]
-                        if not sp_rew is None:
-                            rewards.append(sp_rew)
-                            real_rewards.append(sp_rew)
-                            normalize_reward.append(sp_rew - 20)
+                content = None
+                try:
+                    with open("Data/Matches/{}Matches.txt".format(index), "r") as f:
+                        content = f.read()
+                except Exception as e:
+                    print(e)
+                    # Probably becasue of not finished pattern case
+                    content = None
+                    
+                for pattern_index, pattern_rating in enumerate(ratings):
+                    sp_rew = special_reward[pattern_index]
+                    if not sp_rew is None:
+                        rewards.append(sp_rew)
+                        real_rewards.append(sp_rew)
+                        normalize_reward.append(sp_rew - 20)
 
+                    else:
+                        if not finished_flag:
+                            reward = -5
+                            rewards.append(reward)
+                            real_rewards.append(reward)
+                            normalize_reward.append(reward - 20)
+                            is_done = True
                         else:
-                            if not finished_flag:
-                                reward = -5
-                                rewards.append(reward)
-                                real_rewards.append(reward)
-                                normalize_reward.append(reward - 20)
-                                is_done = True
-                            else:
-                                original_reward = int(content.count(f"{pattern_index}: "))
-                                reward = original_reward
-                                if reward >= model.max_fine_app:
-                                    reward = max(0, 2 * model.max_fine_app - reward)
-                                real_rewards.append(reward)
-                                normalize_reward.append(reward - 20)
+                            original_reward = int(content.count(f"{pattern_index}: "))
+                            reward = original_reward
+                            if reward >= model.max_fine_app:
+                                reward = max(0, 2 * model.max_fine_app - reward)
+                            real_rewards.append(reward)
+                            normalize_reward.append(reward - 20)
 
                 try:
                     if finished_flag:
@@ -824,7 +833,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
 
                 index_max = np.argmax(rewards)
-                run_type = (org_run_name == 'gain_knowledge_model')
                 if total_steps_trained > 500 and real_rewards[index_max] <= 0:
                     continue 
 
@@ -854,12 +862,15 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                                 sum([t != "nop" for sub in comp_values for t in sub]),
                             )
                         )
+                        
                         if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
+                            num_examples_given = model.pred_pattern.get_num_examples()
                             wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                     "max rating": np.max(ratings), "actor_flag": int(actor_flag),
                                     "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
                                     "curent_step": total_steps_trained,
-                                    "certainty": model.certainty})
+                                    "certainty": model.certainty,
+                                    "num_examples": num_examples_given})
 
                         # if total_steps_trained > 4500:
                         #     # Only for sweeps!
@@ -885,7 +896,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
                             g1['lr'] *= 0.85
                             g2['lr'] *= 0.85
-                        continue
+                        # continue
+                        break
                         
                     step_list = None
                     if pretrain_flag:
@@ -901,11 +913,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         model.pred_pattern.train()
                         if pretrain_flag:
                             model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
-                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=3, max_total_count=50, n=25, retrain=True)
+                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=25, retrain=True)
 
                         else:
                             model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
-                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=25, n=10, retrain=True)
+                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=1, max_total_count=25, n=10, retrain=True)
 
 
             rating_groups = [
@@ -974,7 +986,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
         plt.plot(results, "g")
         plt.show()
 
-    run.finish()
     cuda_handle.empty_cache()
     best_res = - 10
     for dict_res in factor_results:
@@ -982,6 +993,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
         if new_res > best_res:
             best_res = new_res
     # return best_res
+
+    if not run_type:
+        wandb.run.summary["test_accuracy"] = model.certainty
+        wandb.run.summary["number_of_examples"] = model.pred_pattern.get_num_examples()
+        wandb.run.summary["mean_result_over_best_patterns"] = np.mean(list(best_found.keys()))
+    run.finish()
     return best_res, best_found
 
 def is_pareto_efficient(costs):
@@ -1010,8 +1027,6 @@ def main(parser):
         rating_flag = True
 
     results = {}
-    data = None
-    first = True
     suggested_models = []
     all_patterns = []
     global class_inst
@@ -1057,36 +1072,38 @@ def main(parser):
             init_flag=True)
         print("Finished creating Knowledge model")
 
-        train(pretrain_inst, num_epochs=4, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
+        train(pretrain_inst, num_epochs=5, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
+        # train(pretrain_inst, num_epochs=1, bs=50, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
         #copy rating modle to trainable model
         class_inst.certainty = pretrain_inst.certainty
         class_inst.pred_pattern = pretrain_inst.pred_pattern
         class_inst.knn = pretrain_inst.knn
         class_inst.list_of_dfs = pretrain_inst.list_of_dfs
     # train working model
-    result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False)
+    result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False, wandb_name=args.wandb_name)
+    # result, patterns = train(class_inst, num_epochs=1, bs=50, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False)
     all_patterns.append(patterns)
     cuda_handle.empty_cache()
-    print(patterns)
-    results.update({split_factor: result})
-    suggested_models.append({split_factor: class_inst})
+    # print(patterns)
+    # results.update({split_factor: result})
+    # suggested_models.append({split_factor: class_inst})
 
 
-    if 0:
-        print(results)
-        pareto_results = np.array(list(results.values()))
-        pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
-        print(pareto_results)
-        patero_results = is_pareto_efficient(pareto_results)
-        good_patterns = []
-        for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
-            if patero_res:
-                print(model)
-                good_patterns.extend(list(patterns))
-                print(patterns)
+    # if 0:
+    #     print(results)
+    #     pareto_results = np.array(list(results.values()))
+    #     pareto_results = np.array([np.array(list(res.values())) for res in pareto_results])
+    #     print(pareto_results)
+    #     patero_results = is_pareto_efficient(pareto_results)
+    #     good_patterns = []
+    #     for patero_res, model, patterns in zip(patero_results, suggested_models, all_patterns):
+    #         if patero_res:
+    #             print(model)
+    #             good_patterns.extend(list(patterns))
+    #             print(patterns)
 
 
-        run_OpenCEP(events=args.final_data_path, patterns=good_patterns, test_name="secondLevel27April")
+    #     run_OpenCEP(events=args.final_data_path, patterns=good_patterns, test_name="secondLevel27April")
 
     return
 
@@ -1094,10 +1111,10 @@ def main(parser):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
-    parser.add_argument('--bs', default=800, type=int, help='batch size')
-    parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
+    parser.add_argument('--bs', default=400, type=int, help='batch size')
+    parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
     parser.add_argument('--lr_actor', default=5e-5, type=float, help='starting learning rate for actor')
-    parser.add_argument('--lr_critic', default=5e-5, type=float, help='starting learning rate for critic')
+    parser.add_argument('--lr_critic', default=5e-4, type=float, help='starting learning rate for critic')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
@@ -1129,6 +1146,7 @@ if __name__ == "__main__":
                 type=lambda x: bool(strtobool(x)), 
                 default = True, help="indication if expert knowledge is available")
 
+    parser.add_argument('--wandb_name', default = 'full_knowledge', type=str)
     parser.add_argument('--exp_name', default = 'StarPilot', type=str)
-    torch.set_num_threads(50)
+    torch.set_num_threads(80)
     main(parser)
