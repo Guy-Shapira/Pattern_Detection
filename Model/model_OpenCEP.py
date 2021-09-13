@@ -242,6 +242,7 @@ class ruleMiningClass(nn.Module):
         #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
         #     torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
         # else:
+        #     print("Loaded pattern rating model! \n")
         #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
         test_pred.df_knn_rating = []
         self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
@@ -513,8 +514,6 @@ def update_policy(policy_network, ratings, rewards, log_probs, values_rating, va
     critic_loss = critic_loss.cuda()
     # ac_loss = actor_loss + critic_loss + 0.001 * entropy_term
 
-
-
     if False:
         actor_loss.backward(retain_graph=True)
         policy_network.actor_optimizer.step()
@@ -529,10 +528,84 @@ def update_policy(policy_network, ratings, rewards, log_probs, values_rating, va
 
     return actor_loss_1, critic_loss_1
 
+
+
+def update_policy_batch(policy_network, ratings, rewards, log_probs, values_rating, values_reward,
+                Qval_rating, Qval_reward, entropy_term, epoch_idx, flag=False, certainty=1.0, run_type=False):
+
+    def l1_penalty(log_probs, l1_lambda=0.001):
+        """
+        Returns the L1 penalty of the params.
+        """
+        l1_norm = sum(log_prob.abs().sum() for log_prob in log_probs)
+        return l1_lambda*l1_norm / len(log_probs)
+
+    actor_loss = None
+    critic_loss = None
+    for i in range(len(ratings)):
+        Qvals_reward = np.zeros_like(values_reward[i])
+        Qvals_rating = np.zeros_like(values_rating[i])
+        curr_rewards = rewards[i]
+        curr_ratings = ratings[i]
+        curr_Qval_reward = Qval_reward[i]
+        curr_Qval_rating = Qval_rating[i]
+        curr_logs = log_probs[i]
+        for t in reversed(range(len(curr_rewards))):
+            Qval_0 = curr_rewards[t] + GAMMA * curr_Qval_reward
+            Qval_1 = curr_ratings[t] * certainty + GAMMA * curr_Qval_rating
+            Qvals_reward[t] = Qval_0
+            Qvals_rating[t] = Qval_1
+
+        if not run_type: #(Normal model)
+            values = torch.FloatTensor((values_reward[i], values_rating[i])).requires_grad_(True)
+            Qvals = torch.FloatTensor((Qvals_reward, Qvals_rating)).requires_grad_(True)
+        else: #(Gain knowledge model)
+            values = torch.FloatTensor(values_rating[i]).requires_grad_(True)
+            Qvals = torch.FloatTensor(Qvals_rating).requires_grad_(True)
+
+        # print(curr_logs)
+        curr_logs = torch.stack(curr_logs).requires_grad_(True)
+        advantage = Qvals - values
+        advantage = advantage.to(curr_logs .device)
+        log_probs_reg = l1_penalty(curr_logs , l1_lambda=0.05)
+
+        curr_actor_loss = (-curr_logs  * advantage).mean().requires_grad_(True)
+
+        curr_actor_loss += log_probs_reg
+        curr_critic_loss = 0.5 * advantage.pow(2).mean().requires_grad_(True)
+
+        if actor_loss is None:
+            actor_loss = curr_actor_loss
+            critic_loss = curr_critic_loss
+        else:
+            actor_loss += curr_actor_loss
+            critic_loss += curr_critic_loss
+
+    # / 2 only to compare to test lower mini batch size, from 14.9.21 should be divided by mini-batch size!
+    policy_network.actor_optimizer.zero_grad()
+    policy_network.critic_optimizer.zero_grad()
+    # actor_loss_1 = actor_loss.cpu().detach().numpy() / 2
+    actor_loss_1 = actor_loss.cpu().detach().numpy() / len(ratings)
+    actor_loss = actor_loss.cuda()
+    # critic_loss_1 = critic_loss.cpu().detach().numpy() / 2
+    critic_loss_1 = critic_loss.cpu().detach().numpy() / len(ratings)
+    critic_loss = critic_loss.cuda()
+    if flag:
+        actor_loss.backward()
+        policy_network.actor_optimizer.step()
+    else:
+        critic_loss.backward()
+        policy_network.critic_optimizer.step()
+
+    return actor_loss_1, critic_loss_1
+
+
+
 def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True, run_name=None, pretrain_flag=False, wandb_name=""):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
     # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
-    new_run_name = f"removed masks"
+    actor_loss, critic_loss =  None, None
+    new_run_name = f"mini-batches "
     run_type = (run_name == 'gain_knowledge_model')
 
     if run_name is None:
@@ -579,6 +652,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
     count_actor = 0
     count_critic = 0
     not_finished_strs = []
+
+    recent_ratings, recent_rewards, recent_logs = [], [], []
+    recent_values_ratings, recent_values_rewards = [], []
+    recent_Qval_ratings, recent_Qval_rewards = [], []
 
     global num_epochs_trained
     for epoch in range(num_epochs):
@@ -731,6 +808,8 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         )
                         patterns.append(pattern)
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
+                        # rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False)
+                        # full knowledge run!
                         rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
                         #TODO: remove, added for sacle factor testing
                         # rating /= 5
@@ -806,7 +885,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
                 except Exception as e:
                     print(e)
-                    raise e
+                    # raise e
                     if not finished_flag:
                         continue
                     else:
@@ -836,11 +915,28 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 if total_steps_trained > 500 and real_rewards[index_max] <= 0:
                     continue 
 
+
+            # recent_ratings, recent_rewards, recent_logs = [], [], []
+            # recent_values_ratings, recent_values_rewards = [], []
+            # recent_Qval_ratings, recent_Qval_rewards = [], []
                 else:
-                    actor_loss , critic_loss  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
-                                                                    Qval_rating, Qval_reward,
-                                                                    entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
-                                                                    run_type=run_type)
+                    recent_ratings.append(ratings)
+                    recent_rewards.append(real_rewards)
+                    recent_logs.append(log_probs)
+                    recent_values_ratings.append(values_rating)
+                    recent_values_rewards.append(values_reward)
+                    recent_Qval_ratings.append(Qval_rating)
+                    recent_Qval_rewards.append(Qval_reward)
+
+                    if len(recent_ratings) == 10:
+                        actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
+                                                recent_Qval_ratings, recent_Qval_rewards,
+                                                entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
+                                                run_type=run_type)
+                        recent_ratings, recent_rewards, recent_logs = [], [], []
+                        recent_values_ratings, recent_values_rewards = [], []
+                        recent_Qval_ratings, recent_Qval_rewards = [], []
+                        # wandb.log({"actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss})
 
                     all_ratings.append(np.sum(ratings))
                     all_rewards.append(rewards[index_max])
@@ -865,12 +961,19 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         
                         if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
                             num_examples_given = model.pred_pattern.get_num_examples()
-                            wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
-                                    "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                    "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
-                                    "curent_step": total_steps_trained,
-                                    "certainty": model.certainty,
-                                    "num_examples": num_examples_given})
+                            if not actor_loss is None: 
+                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                        "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                        "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
+                                        "curent_step": total_steps_trained,
+                                        "certainty": model.certainty,
+                                        "num_examples": num_examples_given})
+                            else:
+                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                        "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                        "curent_step": total_steps_trained,
+                                        "certainty": model.certainty,
+                                        "num_examples": num_examples_given})
 
                         # if total_steps_trained > 4500:
                         #     # Only for sweeps!
@@ -908,16 +1011,17 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         step_list = [25, 250, 500]
 
                     # if (model.knowledge_flag or epoch < 3) and in_round_count in step_list:
-                    if in_round_count in step_list:
-                        model.pred_pattern.save_all()
-                        model.pred_pattern.train()
-                        if pretrain_flag:
-                            model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
-                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=25, retrain=True)
+                    # Full knowledge run!
+                    # if in_round_count in step_list:
+                    #     model.pred_pattern.save_all()
+                    #     model.pred_pattern.train()
+                    #     if pretrain_flag:
+                    #         model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
+                    #         model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=75, retrain=True)
 
-                        else:
-                            model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
-                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=1, max_total_count=25, n=10, retrain=True)
+                    #     else:
+                    #         model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
+                    #         model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=1, max_total_count=25, n=25, retrain=True)
 
 
             rating_groups = [
@@ -1072,7 +1176,7 @@ def main(parser):
             init_flag=True)
         print("Finished creating Knowledge model")
 
-        train(pretrain_inst, num_epochs=5, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
+        train(pretrain_inst, num_epochs=4, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
         # train(pretrain_inst, num_epochs=1, bs=50, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
         #copy rating modle to trainable model
         class_inst.certainty = pretrain_inst.certainty
@@ -1111,14 +1215,14 @@ def main(parser):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
-    parser.add_argument('--bs', default=400, type=int, help='batch size')
-    parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
-    parser.add_argument('--lr_actor', default=5e-5, type=float, help='starting learning rate for actor')
+    parser.add_argument('--bs', default=500, type=int, help='batch size')
+    parser.add_argument('--epochs', default=3, type=int, help='num epochs to train')
+    parser.add_argument('--lr_actor', default=3e-6, type=float, help='starting learning rate for actor')
     parser.add_argument('--lr_critic', default=5e-4, type=float, help='starting learning rate for critic')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
-    parser.add_argument('--max_fine_app', default=70, type=int, help='max appearance of pattnern in a single window')
+    parser.add_argument('--max_fine_app', default=80, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=100, type=int, help='maximum time for pattern (seconds)')
     parser.add_argument('--window_size', default=485, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
