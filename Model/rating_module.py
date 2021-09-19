@@ -25,7 +25,7 @@ np.seterr('raise')
 
 
 SPLIT_1 = 0
-# SPLIT_1 = 20000
+# SPLIT_1 = 3500
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
@@ -111,6 +111,11 @@ class ratingPredictor(nn.Module):
         # self._fix_data_balance(first=True)
         self.count = 0
         self.df_knn_rating = []
+        self.num_examples_given = len(self.ratings_col_train)
+
+    def get_num_examples(self):
+        # return len(self.ratings_col_train)
+        return self.num_examples_given
 
 
     def label_manually(self, n, weights):
@@ -401,6 +406,7 @@ class ratingPredictor(nn.Module):
 
         if count < max_count:
             self.label_manually(n=n, weights=weights)
+            self.num_examples_given += n
             # if (not retrain) and count % 2 == 0:
             self._fix_data_balance()
             # self.m_factor /= 1.05

@@ -94,12 +94,14 @@ class ruleMiningClass(nn.Module):
         hidden_size1=512,
         hidden_size2=2048,
         exp_name="Football",
-        knowledge_flag=True
+        knowledge_flag=True,
+        run_mode="no"
     ):
         super().__init__()
         # self.lr = lr
         self.exp_name = exp_name
         self.knowledge_flag = knowledge_flag
+        self.run_mode = run_mode
         self.actions = [">", "<", "="]
         self.max_predict = (match_max_size + 1) * (len(eff_cols) + 1)
         self.events = np.loadtxt(events_path, dtype='str')
@@ -235,19 +237,29 @@ class ruleMiningClass(nn.Module):
         test_pred = ratingPredictor(df_new, df["rating"])
         self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=3e-5)
         self.pred_sched = StepLR(self.pred_optim, step_size=2000, gamma=0.85)
-
-        # TODO: must un-comment!
-        # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-        # # if False:
-        #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-        #     torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-        # else:
-        #     print("Loaded pattern rating model! \n")
-        #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
         test_pred.df_knn_rating = []
-        self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
-        print(len(test_pred.ratings_col_train))
+        # TODO: add conditions to load no/semi/full knowledge!
+        # TODO: must un-comment!
+
+        if self.run_mode == "no":
+            self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
+        elif self.run_mode == "semi":
+            if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+                torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            else:
+                print("Loaded pattern rating model! \n")
+                test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+            test_pred.num_examples_given = 3500
+            self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
+
+        else: #self.run_mode == "full"
+            # full knowledge run!
+            self.certainty = 1
+
+        test_pred.df_knn_rating = []
+        
         self.pred_pattern = test_pred
         self.pred_pattern.rating_df_unlabeld = None
         self.pred_pattern.unlabeld_strs = []
@@ -500,7 +512,7 @@ def update_policy(policy_network, ratings, rewards, log_probs, values_rating, va
     log_probs = torch.stack(log_probs).requires_grad_(True)
     advantage = Qvals - values
     advantage = advantage.to(log_probs.device)
-    log_probs_reg = l1_penalty(log_probs, l1_lambda=0.05)
+    log_probs_reg = l1_penalty(log_probs, l1_lambda=0.005)
 
     actor_loss = (-log_probs * advantage).mean().requires_grad_(True)
 
@@ -601,7 +613,7 @@ def update_policy_batch(policy_network, ratings, rewards, log_probs, values_rati
 
 
 
-def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True, run_name=None, pretrain_flag=False, wandb_name=""):
+def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_batch_size=16, rating_flag=True, run_name=None, pretrain_flag=False, wandb_name=""):
     # run_name = "second_level_setup_all_lr" + str(model.lr)
     # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
     actor_loss, critic_loss =  None, None
@@ -689,6 +701,23 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     break
                 total_count += 1
                 in_round_count += 1
+                step_list = None
+                if pretrain_flag:
+                    step_list = [10, 25, 40, 60]                        
+                else:
+                    step_list = [25, 250, 500]
+                # Full knowledge run: comment next 10 rows!
+                if in_round_count in step_list:
+                    model.pred_pattern.save_all()
+                    model.pred_pattern.train()
+                    if pretrain_flag:
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=3, max_total_count=50, n=150, retrain=True)
+
+                    else:
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=25, n=50, retrain=True)
+
                 data = model.data[index]
                 data_size = len(data)
                 old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
@@ -808,9 +837,13 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         )
                         patterns.append(pattern)
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
-                        # rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False)
-                        # full knowledge run!
-                        rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
+                        
+                        #TODO: add conditions to allow no/semi/full knoweldge runs!
+                        if model.run_mode == "full":
+                            # full knowledge run!
+                            rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False)
+                        else:
+                            rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
                         #TODO: remove, added for sacle factor testing
                         # rating /= 5
                         ratings.append(rating)
@@ -901,10 +934,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                 gc.collect()
                 actor_flag = False
 
-                if count_actor < 100:
+                if count_actor < 300:
                     actor_flag = True
                     count_actor += len(ratings)
-                elif count_critic < 500:
+                elif count_critic < 1000:
                     count_critic += len(ratings)
                 else:
                     count_actor = 0
@@ -928,7 +961,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                     recent_Qval_ratings.append(Qval_rating)
                     recent_Qval_rewards.append(Qval_reward)
 
-                    if len(recent_ratings) == 10:
+                    if len(recent_ratings) == mini_batch_size:
                         actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
                                                 recent_Qval_ratings, recent_Qval_rewards,
                                                 entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
@@ -1002,26 +1035,6 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
                         # continue
                         break
                         
-                    step_list = None
-                    if pretrain_flag:
-                        step_list = [10, 25, 40, 60]
-                        
-                    else:
-                        # step_list = [25, 150, 250, 600, 700]
-                        step_list = [25, 250, 500]
-
-                    # if (model.knowledge_flag or epoch < 3) and in_round_count in step_list:
-                    # Full knowledge run!
-                    # if in_round_count in step_list:
-                    #     model.pred_pattern.save_all()
-                    #     model.pred_pattern.train()
-                    #     if pretrain_flag:
-                    #         model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
-                    #         model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=75, retrain=True)
-
-                    #     else:
-                    #         model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
-                    #         model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=1, max_total_count=25, n=25, retrain=True)
 
 
             rating_groups = [
@@ -1100,7 +1113,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_f
 
     if not run_type:
         wandb.run.summary["test_accuracy"] = model.certainty
+        # full knowledge run!
         wandb.run.summary["number_of_examples"] = model.pred_pattern.get_num_examples()
+        # wandb.run.summary["number_of_examples"] = total_steps_trained
         wandb.run.summary["mean_result_over_best_patterns"] = np.mean(list(best_found.keys()))
     run.finish()
     return best_res, best_found
@@ -1152,7 +1167,8 @@ def main(parser):
                                 hidden_size2=args.hidden_size2,
                                 exp_name=args.exp_name,
                                 init_flag=True,
-                                knowledge_flag=args.early_knowledge)
+                                knowledge_flag=args.early_knowledge,
+                                run_mode=args.run_mode)
 
     print("Finished creating Training model")
     if not args.early_knowledge: # pre-training is needed
@@ -1173,18 +1189,19 @@ def main(parser):
             hidden_size1=args.hidden_size1,
             hidden_size2=args.hidden_size2,
             exp_name=args.exp_name,
-            init_flag=True)
+            init_flag=True,
+            run_mode=args.run_mode)
         print("Finished creating Knowledge model")
 
-        train(pretrain_inst, num_epochs=4, bs=75, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
+        train(pretrain_inst, num_epochs=4, bs=75, mini_batch_size=args.mbs, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
         # train(pretrain_inst, num_epochs=1, bs=50, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
-        #copy rating modle to trainable model
+        #copy rating model to trainable model
         class_inst.certainty = pretrain_inst.certainty
         class_inst.pred_pattern = pretrain_inst.pred_pattern
         class_inst.knn = pretrain_inst.knn
         class_inst.list_of_dfs = pretrain_inst.list_of_dfs
     # train working model
-    result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False, wandb_name=args.wandb_name)
+    result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, mini_batch_size=args.mbs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False, wandb_name=args.wandb_name)
     # result, patterns = train(class_inst, num_epochs=1, bs=50, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False)
     all_patterns.append(patterns)
     cuda_handle.empty_cache()
@@ -1216,6 +1233,7 @@ def main(parser):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=500, type=int, help='batch size')
+    parser.add_argument('--mbs', default=24, type=int, help='mini batch size')
     parser.add_argument('--epochs', default=3, type=int, help='num epochs to train')
     parser.add_argument('--lr_actor', default=3e-6, type=float, help='starting learning rate for actor')
     parser.add_argument('--lr_critic', default=5e-4, type=float, help='starting learning rate for critic')
@@ -1227,30 +1245,26 @@ if __name__ == "__main__":
     parser.add_argument('--window_size', default=485, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
     parser.add_argument('--split_factor', default=0.2, type=float, help='split how much train to rating and how much for reward')
-    # parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
     parser.add_argument('--data_path', default='StarPilot/GamesExp/', help='path to data log')
 
-    # parser.add_argument('--events_path', default='Football/events', help='path to list of events')
     parser.add_argument('--events_path', default='StarPilot/EventsExp', help='path to list of events')
 
 
-    # parser.add_argument('--pattern_path', default='Patterns/pattern16.csv', help='path to known patterns')
     parser.add_argument('--pattern_path', default='Patterns/pattern28_50_ratings.csv', help='path to known patterns')
     parser.add_argument('--final_data_path', default='store_folder/xaa', help='path to next level data')
-    # parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
-    # parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
-    # parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
-    # parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")
     parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
     parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
     parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
     parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
-    # parser.add_argument('--early_knowledge', default = True, type=bool, help="indication if expert knowledge is available")
     parser.add_argument('--early_knowledge', dest='early_knowledge', 
                 type=lambda x: bool(strtobool(x)), 
                 default = True, help="indication if expert knowledge is available")
 
     parser.add_argument('--wandb_name', default = 'full_knowledge', type=str)
     parser.add_argument('--exp_name', default = 'StarPilot', type=str)
+    parser.add_argument('--run_mode', default="no", type=str, choices=['no', 'semi', 'full'], help="run mode, semi for cool name model, \n"\
+                                                                                                "full for supervised baseline, \n"\
+                                                                                                "no for unsuervised baseline \n")
+
     torch.set_num_threads(80)
     main(parser)
