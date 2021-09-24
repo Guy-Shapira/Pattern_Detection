@@ -80,44 +80,7 @@ class genDataClass(nn.Module):
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
         self.cols  = ["x", "y", "vx", "vy"]
 
-
-    # def _create_data(self, data_path):
-    #     date_time_obj = None
-    #     data = None
-    #     with open(data_path) as f:
-    #         for line in f:
-    #             values = line.split("\n")[0]
-    #             values = values.split(",")
-    #             event = values[0]
-    #             for k, v in zip(SAME_EVENTS.keys(), SAME_EVENTS.values()):
-    #                 if int(event) in v:
-    #                     event = str(k)
-    #                     break
-    #             event = self.embedding_events(torch.tensor(int(new_mapping(event, reverse=True))))
-    #             values = values[2:] # skip sid and ts
-    #             embed_values = [self.embedding_values[i](torch.tensor(int(value) + self.normailze_values[i])) for (i,value) in enumerate(values)]
-    #             embed_values.insert(0, event)
-    #             if data is None:
-    #                 data = torch.cat(tuple(embed_values), 0)
-    #                 data = data.unsqueeze(0)
-    #             else:
-    #                 new_data = torch.cat(tuple(embed_values), 0)
-    #                 new_data = new_data.unsqueeze(0)
-    #                 data = torch.cat((data, new_data), 0)
-    #
-    #     sliding_window_data = None
-    #     for i in range(0, len(data) - self.window_size):
-    #         if sliding_window_data is None:
-    #             sliding_window_data = data[i : i + self.window_size]
-    #             sliding_window_data = sliding_window_data.unsqueeze(0)
-    #         else:
-    #             to_add = data[i : i + self.window_size].unsqueeze(0)
-    #             sliding_window_data = torch.cat((sliding_window_data, to_add))
-    #     return sliding_window_data
-    #
-
-
-def genData(model, num_epochs=25):
+def genData(model, num_epochs=1):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)  # need to remove + 1
@@ -132,7 +95,9 @@ def genData(model, num_epochs=25):
         patterns_all = ["pass", "dribble", "two-run"] * 45 + ["random"] * 10
     elif model.exp_name == "StarPilot":
         # patterns_all = ["finish", "random"]
-        patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
+        # patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
+        # patterns to test on
+        patterns_all = ["run-back"]
         bullet_list = ["bullet" + str(i) for i in range(1,7)]
         flyer_list = ["flyer" + str(i) for i in range(1,9)]
         explosion_list = ["explosion" + str(i) for i in range(1,9)]
@@ -144,8 +109,8 @@ def genData(model, num_epochs=25):
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
         # assumes shit Model/training has relavent data!
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:800]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 800 :(epoch + 1) * 800]):
+        with tqdm.tqdm(total=len(os.listdir("Model/training")[:350]), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data[epoch * 350 :(epoch + 1) * 350]):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -501,53 +466,53 @@ def genData(model, num_epochs=25):
                             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
                             test2.append(user_reward)
                     continue
-                # elif pattern_type == "run-back":
-                #     in_between = random.choice([0, 1, 2])
-                #     events = ["player"]
-                #     # events = ["player", "finish"]
-                #     next_actions = random.choices(model.all_actions, k=len(model.cols))
-                #     next_actions[0] = "="
-                #     actions.append(next_actions)
-                #     next_conds = random.choices(["and", "or"], k=len(model.cols))
-                #     next_conds[0] = "and"
-                #     all_conds.append(next_conds)
-                #     next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
-                #     comp_values.append(next_comp_vals)
-                #     next_targets = random.choices(comp_targets, k=len(model.cols))
-                #     next_targets[0] = 1 + in_between
-                #     all_comps.append(next_targets)
-                #     while in_between > 0:
-                #         in_between -=1
-                #         event = random.choice(bullet_list + flyer_list)
-                #         events.append(event)
-                #         next_targets = random.choices(comp_targets, k=len(model.cols))
-                #         next_actions = random.choices(model.all_actions, k=len(model.cols))
-                #         next_conds = random.choices(["and", "or"], k=len(model.cols))
-                #         next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
-                #
-                #         comp_values.append(next_comp_vals)
-                #         actions.append(next_actions)
-                #         all_comps.append(next_targets)
-                #         all_conds.append(next_conds)
-                #
-                #     # add finish to the pattern
-                #     events.append("finish")
-                #     next_actions = random.choices(model.all_actions, k=len(model.cols))
-                #     actions.append(next_actions)
-                #     next_conds = random.choices(["and", "or"], k=len(model.cols))
-                #     all_conds.append(next_conds)
-                #     next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
-                #     comp_values.append(next_comp_vals)
-                #     next_targets = random.choices(comp_targets, k=len(model.cols))
-                #     all_comps.append(next_targets)
-                #
-                #     for i in range(len(events)):
-                #         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
-                #         user_reward = np.random.uniform(3*(i+1), 6*(i+1))
-                #         if np.random.randint(4):
-                #             store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
-                #             test2.append(user_reward)
-                #     continue
+                elif pattern_type == "run-back":
+                    in_between = random.choice([0, 1, 2])
+                    events = ["player"]
+                    # events = ["player", "finish"]
+                    next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    next_actions[0] = "="
+                    actions.append(next_actions)
+                    next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    next_conds[0] = "and"
+                    all_conds.append(next_conds)
+                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    comp_values.append(next_comp_vals)
+                    next_targets = random.choices(comp_targets, k=len(model.cols))
+                    next_targets[0] = 1 + in_between
+                    all_comps.append(next_targets)
+                    while in_between > 0:
+                        in_between -=1
+                        event = random.choice(bullet_list + flyer_list)
+                        events.append(event)
+                        next_targets = random.choices(comp_targets, k=len(model.cols))
+                        next_actions = random.choices(model.all_actions, k=len(model.cols))
+                        next_conds = random.choices(["and", "or"], k=len(model.cols))
+                        next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                
+                        comp_values.append(next_comp_vals)
+                        actions.append(next_actions)
+                        all_comps.append(next_targets)
+                        all_conds.append(next_conds)
+                
+                    # add finish to the pattern
+                    events.append("finish")
+                    next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    actions.append(next_actions)
+                    next_conds = random.choices(["and", "or"], k=len(model.cols))
+                    all_conds.append(next_conds)
+                    next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
+                    comp_values.append(next_comp_vals)
+                    next_targets = random.choices(comp_targets, k=len(model.cols))
+                    all_comps.append(next_targets)
+                
+                    for i in range(len(events)):
+                        str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
+                        user_reward = np.random.uniform(3*(i+1), 6*(i+1))
+                        if np.random.randint(4):
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            test2.append(user_reward)
+                    continue
     print(np.mean(test1))
     print(np.mean(test2))
     return test1

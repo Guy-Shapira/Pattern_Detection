@@ -435,7 +435,7 @@ def create_pattern_str(events, actions, comp_vals, conds, cols, comp_target):
     """
     helper method that creates a string that describes the suggested pattern,
     deatiling it's events and conditions
-    :param events: list of ther events that appear in the patterns
+    :param events: list of ther events that appear in the pattern (in order, same for all other params in function)
     :param actions: list of lists, the i-th inner list details the conditions on
     the attributes of i-th event in the pattern
     :param comp_val: list of lists, the i-th inner lists details the value that

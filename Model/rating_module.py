@@ -24,8 +24,8 @@ np.random.seed(0)
 np.seterr('raise')
 
 
-SPLIT_1 = 0
-# SPLIT_1 = 3500
+# SPLIT_1 = 0
+SPLIT_1 = 3500
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
@@ -546,29 +546,34 @@ class ratingPredictor(nn.Module):
 
 
 
-def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch=0, pred_flag=False):
+def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch=0, pred_flag=False, flat_flag=False):
     if rating_flag:
         if pred_flag:
-            model_rating, norm_rating,  = model_based_rating(model, events, all_conds, str_pattern, actions)
+            model_rating, norm_rating,  = model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag)
             if len(events) == 1:
                 return model_rating - 0.5, norm_rating
             else:
                 # return (model_rating + 0.1 * len(events)) * (1.05 ** (epoch + 1)), norm_rating
                 return (model_rating + 0.3 * len(events)), norm_rating
         else:
-            return knn_based_rating(model, events, str_pattern, actions)
+            return knn_based_rating(model, events, str_pattern, actions, flat_flag)
     else:
         # return 1, 1 # GPU first test
         return other_rating(model, events, all_conds, actions, str_pattern)
 
 
-def knn_based_rating(model, events, str_pattern, actions):
+def knn_based_rating(model, events, str_pattern, actions, flat_flag=False):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     
     predict_pattern = None
+    if flat_flag:
+        enum_array = [events, actions]
+    else:
+        enum_array = [events, flatten(actions)]
+
     try:
         # for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
-        for arr_index, arr in enumerate([events, flatten(actions)]):
+        for arr_index, arr in enumerate(enum_array):
             arr = arr.copy()
             temp_pd = model.list_of_dfs[arr_index].copy()
             arr += ["Nan"] * (len(temp_pd) - len(arr))
@@ -635,14 +640,18 @@ def other_rating(model, events, all_conds, actions, str_pattern):
     # rating -= 2
     return rating, rating
 
-def model_based_rating(model, events, all_conds, str_pattern, actions):
+def model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag=False):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     rating = 0
     predict_pattern = None
     with torch.no_grad():
         try:
             # for arr_index, arr in enumerate([events, flatten(all_conds), flatten(actions)]):
-            for arr_index, arr in enumerate([events, flatten(actions)]):
+            if flat_flag:
+                enum_array = [events, actions]
+            else:
+                enum_array = [events, flatten(actions)]
+            for arr_index, arr in enumerate(enum_array):
                 arr = arr.copy()
                 temp_pd = model.list_of_dfs[arr_index].copy()
                 arr += ["Nan"] * (len(temp_pd) - len(arr))
@@ -655,7 +664,8 @@ def model_based_rating(model, events, all_conds, str_pattern, actions):
                     predict_pattern = pd.concat([predict_pattern, to_add], axis=1).reset_index(drop=True)
 
             start_time = timeit.default_timer()
-            knn_rating, _ = knn_based_rating(model, events, str_pattern, actions)
+            # print(str_pattern)
+            knn_rating, _ = knn_based_rating(model, events, str_pattern, actions, flat_flag)
             knn_time = timeit.default_timer() - start_time
             start_time = timeit.default_timer()
             rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events, knn_rating=knn_rating))

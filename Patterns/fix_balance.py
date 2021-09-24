@@ -3,10 +3,13 @@ import csv
 import numpy as np
 
 factor = 5
-# org_file = open("Patterns/pattern25.csv")
-df = pd.read_csv("Patterns/pattern28_pre_final.csv")
+# org_file = "Patterns/pattern28_pre_final.csv"
+org_file = "Patterns/test_patterns_StarPilot.csv"
+
+df = pd.read_csv(org_file)
 counts = np.zeros(10 * factor)
-out_file = open(f"Patterns/pattern28_{10 * factor}_ratings.csv", "w")
+# out_file = open(f"Patterns/pattern28_{10 * factor}_ratings.csv", "w")
+out_file = open(f"Patterns/test_StarPilot.csv", "w")
 spamwriter = csv.writer(out_file)
 spamwriter.writerow(df.columns)
 for i, row in df.iterrows():

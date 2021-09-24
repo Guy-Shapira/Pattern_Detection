@@ -642,6 +642,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
 
     total_best = -1
     best_found = {}
+    actuall_best_found = {}
     results, all_rewards, numsteps, avg_numsteps, mean_rewards, real, mean_real, rating_plot, all_ratings, factor_results = (
         [],
         [],
@@ -716,7 +717,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
 
                     else:
                         model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
-                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=25, n=50, retrain=True)
+                        n = 75
+                        if model.run_mode == "semi":
+                            n = 50
+                        # else:
+                        #     n = 50
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=25, n=n, retrain=True)
 
                 data = model.data[index]
                 data_size = len(data)
@@ -904,17 +910,24 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                             sp_rew = special_reward[pattern_index]
                             if sp_rew is None:
                                 reward = real_rewards[pattern_index] * 0.75 + near_windows_rewards[pattern_index] * 0.25
+                                actuall_rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False)
+                                actuall_best_found_reward = reward * actuall_rating
 
                                 reward *= pattern_rating
-
+                                
                                 rewards.append(reward)
+
                             if len(best_found) < 10:
                                 best_found.update({reward: pattern})
+                                actuall_best_found.update({reward: actuall_best_found_reward})
                             else:
                                 worst_reward = sorted(list(best_found.keys()))[0]
                                 if reward > worst_reward:
                                     del best_found[worst_reward]
+                                    del actuall_best_found[worst_reward]
                                     best_found.update({reward: pattern})
+                                    actuall_best_found.update({reward: actuall_best_found_reward})
+
 
                 except Exception as e:
                     print(e)
@@ -1111,12 +1124,28 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
             best_res = new_res
     # return best_res
 
+
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+    prefix_path = "Model/Weights"
+    torch.save(model.state_dict(), prefix_path + "/Model/" + timestr + ".pt")
+    torch.save(model.pred_pattern.state_dict(), prefix_path + "/Pattern/" + timestr + ".pt")
+
+
+    #TODO: continue from here!
+    run_test(model, name="", avg_score=0.0)
+
+
     if not run_type:
         wandb.run.summary["test_accuracy"] = model.certainty
-        # full knowledge run!
-        wandb.run.summary["number_of_examples"] = model.pred_pattern.get_num_examples()
-        # wandb.run.summary["number_of_examples"] = total_steps_trained
         wandb.run.summary["mean_result_over_best_patterns"] = np.mean(list(best_found.keys()))
+
+        if model.run_mode == "full":
+            wandb.run.summary["number_of_examples"] = total_steps_trained
+            wandb.run.summary["actuall_mean_result_over_best"] = np.mean(list(best_found.keys()))
+        else:
+            wandb.run.summary["number_of_examples"] = model.pred_pattern.get_num_examples()
+            wandb.run.summary["actuall_mean_result_over_best"] = np.mean(list(actuall_best_found.values()))
+
     run.finish()
     return best_res, best_found
 
@@ -1132,6 +1161,44 @@ def is_pareto_efficient(costs):
             is_efficient[is_efficient] = np.any(costs[is_efficient] < c, axis=1)  # Keep any point with a lower cost
             is_efficient[i] = True  # And keep self
     return is_efficient
+
+
+def run_test(model, name, load_flag=False, avg_score=0.0):
+    #TODO: convert to pattern form!
+    prefix_path = "Model/Weights"
+    if load_flag:
+        # model.load(prefix_path + "/Model/" + name + ".pt")
+        model.pred_pattern.load_state_dict(torch.load(prefix_path + "/Pattern/" + name + ".pt"))
+    model.eval()
+    df = pd.read_csv("Patterns/test_StarPilot.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+    df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 49))
+    diff = 0.0
+    sum_out_of_sample = 0.0
+    
+    for _, row in df.iterrows():
+
+        events = ast.literal_eval(row['events'])
+        real_rating = row['rating']
+        str_pattern = row['pattern_str']
+        if isinstance(str_pattern, float):
+            str_pattern = ""
+        actions = ast.literal_eval(row['actions'])
+        all_conds = []
+        rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag=True, pred_flag=True, flat_flag=True)
+        diff_val = rating - int(real_rating)
+        add_value = 1.0
+        if diff_val <= 7:
+            add_value = 0.25
+        elif diff_val <= 15:
+            add_value = 0.5
+        
+        if diff_val >= 1:
+            diff += add_value
+        sum_out_of_sample += rating * avg_score
+    
+    print(f"Sum new pattern = {sum_out_of_sample / len(df)}")
+    print(f"Acc = {1 - diff / len(df)}")
+    # return diff / len(df)
 
 
 def main(parser):
@@ -1171,6 +1238,9 @@ def main(parser):
                                 run_mode=args.run_mode)
 
     print("Finished creating Training model")
+    run_test(class_inst, name="20210924-123849", load_flag=True, avg_score=20.2)
+    return
+
     if not args.early_knowledge: # pre-training is needed
         pretrain_inst = ruleMiningClass(data_path=args.data_path,
             pattern_path=args.pattern_path,
@@ -1203,6 +1273,7 @@ def main(parser):
     # train working model
     result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, mini_batch_size=args.mbs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False, wandb_name=args.wandb_name)
     # result, patterns = train(class_inst, num_epochs=1, bs=50, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False)
+
     all_patterns.append(patterns)
     cuda_handle.empty_cache()
     # print(patterns)
