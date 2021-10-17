@@ -22,6 +22,7 @@ from Model.utils import (
     run_OpenCEP,
     check_predictor,
     calc_near_windows,
+    OverFlowError,
 )
 
 from Model.rating_module import (
@@ -523,10 +524,84 @@ with torch.autograd.detect_anomaly():
 
         return actor_loss_1, critic_loss_1
 
-    def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, rating_flag=True):
-        run_name = f"GPU data large test, even more cols, hyperparams fitted"
+
+    def update_policy_batch(policy_network, ratings, rewards, log_probs, values_rating, values_reward,
+                    Qval_rating, Qval_reward, flag=False):
+
+        def l1_penalty(log_probs, l1_lambda=0.001):
+            """
+            Returns the L1 penalty of the params.
+            """
+            l1_norm = sum(log_prob.abs().sum() for log_prob in log_probs)
+            return l1_lambda*l1_norm / len(log_probs)
+
+        actor_loss = None
+        critic_loss = None
+        for i in range(len(ratings)):
+            Qvals_reward = np.zeros_like(values_reward[i])
+            Qvals_rating = np.zeros_like(values_rating[i])
+            curr_rewards = rewards[i]
+            curr_ratings = ratings[i]
+            curr_Qval_reward = Qval_reward[i]
+            curr_Qval_rating = Qval_rating[i]
+            curr_logs = log_probs[i]
+            for t in reversed(range(len(curr_rewards))):
+                Qval_0 = curr_rewards[t] + GAMMA * curr_Qval_reward
+                Qval_1 = curr_ratings[t] *  GAMMA * curr_Qval_rating
+                Qvals_reward[t] = Qval_0
+                Qvals_rating[t] = Qval_1
+
+            values = torch.FloatTensor((values_reward[i], values_rating[i])).requires_grad_(True)
+            Qvals = torch.FloatTensor((Qvals_reward, Qvals_rating)).requires_grad_(True)
+
+            # print(curr_logs)
+            curr_logs = torch.stack(curr_logs).requires_grad_(True)
+            advantage = Qvals - values
+            advantage = advantage.to(curr_logs .device)
+            log_probs_reg = l1_penalty(curr_logs , l1_lambda=0.05)
+
+            curr_actor_loss = (-curr_logs  * advantage).mean().requires_grad_(True)
+
+            curr_actor_loss += log_probs_reg
+            curr_critic_loss = 0.5 * advantage.pow(2).mean().requires_grad_(True)
+
+            if actor_loss is None:
+                actor_loss = curr_actor_loss
+                critic_loss = curr_critic_loss
+            else:
+                actor_loss += curr_actor_loss
+                critic_loss += curr_critic_loss
+
+        # / 2 only to compare to test lower mini batch size, from 14.9.21 should be divided by mini-batch size!
+        policy_network.actor_optimizer.zero_grad()
+        policy_network.critic_optimizer.zero_grad()
+        # actor_loss_1 = actor_loss.cpu().detach().numpy() / 2
+        actor_loss_1 = actor_loss.cpu().detach().numpy() / len(ratings)
+        actor_loss = actor_loss.cuda()
+        # critic_loss_1 = critic_loss.cpu().detach().numpy() / 2
+        critic_loss_1 = critic_loss.cpu().detach().numpy() / len(ratings)
+        critic_loss = critic_loss.cuda()
+        if flag:
+            actor_loss.backward()
+            policy_network.actor_optimizer.step()
+        else:
+            critic_loss.backward()
+            policy_network.critic_optimizer.step()
+
+        return actor_loss_1, critic_loss_1
+
+
+
+    def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_batch_size=16, rating_flag=True, run_name=""):
+        global total_steps_trained
+        total_steps_trained = 0
+
+        if run_name == "":
+            run_name = f"GPU data large test, even more cols, hyperparams fitted"
+        else:
+            run_name = f"GPU data: {run_name}"
         not_finished_count = 0
-        run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
+        run = wandb.init(project='Pattern_Mining- GPU', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
         config.hidden_size1 = model.hidden_size1
         config.hidden_size2 = model.hidden_size2
@@ -543,6 +618,10 @@ with torch.autograd.detect_anomaly():
         added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)
         total_best = -1
         best_found = {}
+        actor_loss, critic_loss =  None, None
+
+        # raise OverFlowError([], [], [])
+
         results, all_rewards, numsteps, avg_numsteps, mean_rewards, real, mean_real, rating_plot, all_ratings, factor_results = (
             [],
             [],
@@ -563,11 +642,16 @@ with torch.autograd.detect_anomaly():
         total_count = -5
         count_actor = 0
         count_critic = 0
+        best_average_reward, best_average_rating = -1, -1
 
         global num_epochs_trained
+        recent_ratings, recent_rewards, recent_logs = [], [], []
+        recent_values_ratings, recent_values_rewards = [], []
+        recent_Qval_ratings, recent_Qval_rewards = [], []
+
         for epoch in range(num_epochs):
             config.update({"current_epoch" : epoch}, allow_val_change=True)
-
+            current_epoch_reward, current_epoch_rating = 0, 0
             model.count = 0
             if num_epochs_trained is None:
                 num_epochs_trained = 0
@@ -819,10 +903,10 @@ with torch.autograd.detect_anomaly():
                     #     send_rewards = real_rewards
 
                     actor_flag = False
-                    if count_actor < 100:
+                    if count_actor < 500:
                         actor_flag = True
                         count_actor += len(ratings)
-                    elif count_critic < 500:
+                    elif count_critic < 1500:
                         count_critic += len(ratings)
                     else:
                         count_actor = 0
@@ -830,13 +914,35 @@ with torch.autograd.detect_anomaly():
 
 
                     index_max = np.argmax(rewards)
-                    if total_steps_trained > 2500 and real_rewards[index_max] <= 0:
+                    if total_steps_trained > 3000 and real_rewards[index_max] <= 0:
                         continue 
 
                     else:
-                        a1, c1  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
-                                                                    Qval_rating, Qval_reward,
-                                                                    entropy_term, epoch, flag=actor_flag)
+                        recent_ratings.append(ratings)
+                        recent_rewards.append(real_rewards)
+                        recent_logs.append(log_probs)
+                        recent_values_ratings.append(values_rating)
+                        recent_values_rewards.append(values_reward)
+                        recent_Qval_ratings.append(Qval_rating)
+                        recent_Qval_rewards.append(Qval_reward)
+
+                        if len(recent_ratings) == mini_batch_size:
+                            flatten_rewards = flatten(recent_rewards)
+                            flatten_ratings = flatten(recent_ratings)
+                            current_epoch_reward += sum(flatten_rewards) / len(flatten_rewards)
+                            current_epoch_rating += sum(flatten_ratings) / len(flatten_ratings)
+                            actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
+                                                    recent_Qval_ratings, recent_Qval_rewards, flag=actor_flag)
+                            recent_ratings, recent_rewards, recent_logs = [], [], []
+                            recent_values_ratings, recent_values_rewards = [], []
+                            recent_Qval_ratings, recent_Qval_rewards = [], []
+                            # wandb.log({"actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss})
+
+
+
+                        # a1, c1  = update_policy(model, ratings, real_rewards, log_probs, values_rating, values_reward,
+                                                                    # Qval_rating, Qval_reward,
+                                                                    # entropy_term, epoch, flag=actor_flag)
 
                         # index_max = np.argmax(rewards)
                         all_ratings.append(np.sum(ratings))
@@ -859,9 +965,14 @@ with torch.autograd.detect_anomaly():
                                 )
                             )
                             if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
-                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                if not actor_loss is None: 
+                                    wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                            "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                            "actor_loss": actor_loss, "critic_loss": critic_loss,
+                                            "curent_step": total_steps_trained})
+                                else:
+                                    wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                         "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                        "actor_loss": a1, "critic_loss": c1,
                                         "curent_step": total_steps_trained})
 
                             # if total_steps_trained > 4500:
@@ -955,10 +1066,19 @@ with torch.autograd.detect_anomaly():
                 #         results.append(int(f.read().count("\n") / (max_len_best + 1)))
                 #     os.remove("Data/Matches/allMatches.txt")
 
+            if current_epoch_reward >= best_average_reward:
+                best_average_reward = current_epoch_reward
+                best_average_rating = current_epoch_rating
         if test_epcohs:
             print(results)
             plt.plot(results, "g")
             plt.show()
+
+        wandb.run.summary["mean_result_over_best_patterns"] = np.mean(list(best_found.keys()))
+        wandb.run.summary["number_of_examples"] = total_steps_trained
+        wandb.run.summary["avg_reward_in_best_epoch"] = best_average_reward
+        wandb.run.summary["avg_rating_in_best_epoch"] = best_average_rating
+
 
         run.finish()
         cuda_handle.empty_cache()
@@ -993,6 +1113,15 @@ with torch.autograd.detect_anomaly():
         all_cols = [item for item in args.all_cols.split(',')]
 
         eff_cols = [item for item in args.eff_cols.split(',')]
+
+        #Test effect of #gpus accessible
+        col_names = ['FB Memory Usage Used GPU_','Power Samples Max GPU_', 'Power Samples Avg GPU_']
+        eff_cols = []
+        for i in range(0, 5):
+            curr_cols = [name + str(i) for name in col_names]
+            eff_cols.extend(curr_cols)
+
+        # eff_cols = [name + "0" for name in col_names]
         if args.pattern_path == "":
             rating_flag = False
         else:
@@ -1004,7 +1133,10 @@ with torch.autograd.detect_anomaly():
         suggested_models = []
         all_patterns = []
         split_factor = args.split_factor
-        for window_size in [args.window_size]:
+        window_size = args.window_size
+        for gpu_number in range(5, 8):
+            curr_cols = [name + str(gpu_number) for name in col_names]
+            eff_cols.extend(curr_cols)
             global class_inst
             class_inst = ruleMiningClass(data_path=args.data_path,
                                         pattern_path=args.pattern_path,
@@ -1026,7 +1158,8 @@ with torch.autograd.detect_anomaly():
                                         init_flag=True)
 
             if 1:
-                result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, split_factor=split_factor, rating_flag=rating_flag)
+                run_name = "num gpus: " + str(gpu_number + 1)
+                result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, mini_batch_size=args.mbs, split_factor=split_factor, rating_flag=rating_flag, run_name=run_name)
                 all_patterns.append(patterns)
                 cuda_handle.empty_cache()
                 print(patterns)
@@ -1056,7 +1189,8 @@ with torch.autograd.detect_anomaly():
     if __name__ == "__main__":
         parser = argparse.ArgumentParser(description='CEP pattern miner')
         parser.add_argument('--bs', default=250, type=int, help='batch size')
-        parser.add_argument('--epochs', default=20, type=int, help='num epochs to train')
+        parser.add_argument('--mbs', default=32, type=int, help='mini batch size')
+        parser.add_argument('--epochs', default=10, type=int, help='num epochs to train')
         parser.add_argument('--lr_actor', default=5e-8, type=float, help='starting learning rate for actor')
         parser.add_argument('--lr_critic', default=5e-5, type=float, help='starting learning rate for critic')
         parser.add_argument('--hidden_size1', default=2048, type=int, help='hidden_size param for model')

@@ -246,11 +246,12 @@ class ruleMiningClass(nn.Module):
             self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
         elif self.run_mode == "semi":
             if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                pass
+                # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+                # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
             else:
                 print("Loaded pattern rating model! \n")
-                test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                # test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
             test_pred.num_examples_given = 3500
             self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
@@ -414,10 +415,12 @@ class ruleMiningClass(nn.Module):
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
         if np.random.rand() > 1 - training_factor:
             action = np.random.randint(num_actions)
+        
+        log_prob = torch.log(probs.squeeze(0)[action])
         if index % 50 == 0:
             print(probs)
+            print(log_prob)
 
-        log_prob = torch.log(probs.squeeze(0)[action])
         if abs(log_prob) < 0.1:
             self.count += 1
 
@@ -619,7 +622,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
     actor_loss, critic_loss =  None, None
     new_run_name = f"mini-batches "
     run_type = (run_name == 'gain_knowledge_model')
-
+    pred_flag = (model.run_mode != "full")
     if run_name is None:
         run_name = new_run_name
     else:
@@ -656,12 +659,15 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
         [],
     )
     max_rating = []
-    entropy_term, turn_flag = 0, 0
+    # entropy_term, turn_flag = 0, 0
+    entropy_term =  0
+
+    #TODO: change this to be diffent in gain_knowledge and train_model
     training_factor = 0.8
     # training_factor = 0.0
-    switch_flag = int(split_factor * bs)
+    # switch_flag = int(split_factor * bs)
     pbar_file = sys.stdout
-    total_count = -5
+    total_count = 0
     count_actor = 0
     count_critic = 0
     not_finished_strs = []
@@ -670,11 +676,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
     recent_values_ratings, recent_values_rewards = [], []
     recent_Qval_ratings, recent_Qval_rewards = [], []
 
+    model.count = 0
+
     global num_epochs_trained
     for epoch in range(num_epochs):
         config.update({"current_epoch" : epoch}, allow_val_change=True)
 
-        model.count = 0
         if num_epochs_trained is None:
             num_epochs_trained = 0
         else:
@@ -691,13 +698,12 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
             data_len = len(os.listdir(path))
             for index in range(epoch + 2, min(data_len - 2, len(model.data)), data_len // bs):
                 set_data = None
-                if total_count >= bs:
-                    total_count = 0
-                    turn_flag = 1 - turn_flag
+                # if total_count >= bs:
+                #     total_count = 0
+                #     turn_flag = 1 - turn_flag
 
-                if total_count >= switch_flag:
-                    turn_flag = 1 - turn_flag
-
+                # if total_count >= switch_flag:
+                #     turn_flag = 1 - turn_flag
                 if in_round_count >= bs:
                     break
                 total_count += 1
@@ -708,21 +714,23 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                 else:
                     step_list = [25, 250, 500]
                 # Full knowledge run: comment next 10 rows!
-                if in_round_count in step_list:
+                if in_round_count in step_list and not model.run_mode == "full":
                     model.pred_pattern.save_all()
                     model.pred_pattern.train()
                     if pretrain_flag:
-                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=3e-5)
-                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=3, max_total_count=50, n=150, retrain=True)
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=1e-4)
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=3, max_total_count=50, n=175, retrain=True)
 
                     else:
-                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-6)
+                        model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
                         n = 75
                         if model.run_mode == "semi":
                             n = 50
                         # else:
                         #     n = 50
-                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=25, n=n, retrain=True)
+
+                        #TODO: check why this is almost meaningless and doesn't impact training
+                        model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=40, n=n, retrain=True)
 
                 data = model.data[index]
                 data_size = len(data)
@@ -754,7 +762,9 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                 # if in_round_count % 35 == 0 and epoch < 5:
                 #     temper /= 1.05
                 # if total_count % 250 == 0 and training_factor > 0.3:
-                if total_count % 250:
+                if total_count % 75 == 0:
+                    # print(total_count)
+                    # input("wait what the fuck")
                     training_factor /= 1.2
                 while not is_done:
                     if not set_data is None:
@@ -845,13 +855,11 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                         str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
                         
                         #TODO: add conditions to allow no/semi/full knoweldge runs!
-                        if model.run_mode == "full":
-                            # full knowledge run!
-                            rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False)
-                        else:
-                            rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=True)
+                        rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=pred_flag)
+
                         #TODO: remove, added for sacle factor testing
                         # rating /= 5
+
                         ratings.append(rating)
                         normalize_rating.append(norm_rating)
 
@@ -947,10 +955,10 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                 gc.collect()
                 actor_flag = False
 
-                if count_actor < 300:
+                if count_actor < 600:
                     actor_flag = True
                     count_actor += len(ratings)
-                elif count_critic < 1000:
+                elif count_critic < 1500:
                     count_critic += len(ratings)
                 else:
                     count_actor = 0
@@ -958,7 +966,7 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
 
 
                 index_max = np.argmax(rewards)
-                if total_steps_trained > 500 and real_rewards[index_max] <= 0:
+                if total_steps_trained > 4500 and real_rewards[index_max] <= 0:
                     continue 
 
 
@@ -1013,13 +1021,15 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                                         "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
                                         "curent_step": total_steps_trained,
                                         "certainty": model.certainty,
-                                        "num_examples": num_examples_given})
+                                        "num_examples": num_examples_given,
+                                        "training_factor": training_factor})
                             else:
                                 wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
                                         "max rating": np.max(ratings), "actor_flag": int(actor_flag),
                                         "curent_step": total_steps_trained,
                                         "certainty": model.certainty,
-                                        "num_examples": num_examples_given})
+                                        "num_examples": num_examples_given,
+                                        "training_factor": training_factor})
 
                         # if total_steps_trained > 4500:
                         #     # Only for sweeps!
@@ -1038,15 +1048,19 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
                                 index_max + 1,
                             )
                         )
+                        sys.stdout.write(f"\n--- Current count {model.count} ---\n")
+                    
                     config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
-                    if model.count > 150:
+                    #TODO: hyper-param, need to find proper value
+                    if model.count > 50:
                         print("\n\n\n---- Stopping early because of low log ----\n\n\n")
                         model.count = 0
                         for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
                             g1['lr'] *= 0.85
                             g2['lr'] *= 0.85
                         # continue
-                        break
+                        training_factor = 0.6
+                        # break
                         
 
 
@@ -1131,13 +1145,13 @@ def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_bat
     torch.save(model.pred_pattern.state_dict(), prefix_path + "/Pattern/" + timestr + ".pt")
 
 
-    #TODO: continue from here!
-    run_test(model, name="", avg_score=0.0)
-
+    out_sample_acc, mean_result_out = run_test(model, load_flag=False, avg_score=np.mean(real), rating_flag=rating_flag, pred_flag=pred_flag)    
 
     if not run_type:
         wandb.run.summary["test_accuracy"] = model.certainty
         wandb.run.summary["mean_result_over_best_patterns"] = np.mean(list(best_found.keys()))
+        wandb.run.summary["out_of_sample_acc"] = out_sample_acc
+        wandb.run.summary["out_of_sample_mean_reward"] = mean_result_out
 
         if model.run_mode == "full":
             wandb.run.summary["number_of_examples"] = total_steps_trained
@@ -1163,7 +1177,7 @@ def is_pareto_efficient(costs):
     return is_efficient
 
 
-def run_test(model, name, load_flag=False, avg_score=0.0):
+def run_test(model, name="", load_flag=False, avg_score=0.0, rating_flag=False, pred_flag=False):
     #TODO: convert to pattern form!
     prefix_path = "Model/Weights"
     if load_flag:
@@ -1184,7 +1198,7 @@ def run_test(model, name, load_flag=False, avg_score=0.0):
             str_pattern = ""
         actions = ast.literal_eval(row['actions'])
         all_conds = []
-        rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag=True, pred_flag=True, flat_flag=True)
+        rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag=rating_flag, pred_flag=pred_flag, flat_flag=True)
         diff_val = rating - int(real_rating)
         add_value = 1.0
         if diff_val <= 7:
@@ -1196,9 +1210,9 @@ def run_test(model, name, load_flag=False, avg_score=0.0):
             diff += add_value
         sum_out_of_sample += rating * avg_score
     
-    print(f"Sum new pattern = {sum_out_of_sample / len(df)}")
+    print(f"mean new pattern = {sum_out_of_sample / len(df)}")
     print(f"Acc = {1 - diff / len(df)}")
-    # return diff / len(df)
+    return sum_out_of_sample / len(df), (1 - (diff / len(df)))
 
 
 def main(parser):
@@ -1238,8 +1252,6 @@ def main(parser):
                                 run_mode=args.run_mode)
 
     print("Finished creating Training model")
-    run_test(class_inst, name="20210924-123849", load_flag=True, avg_score=20.2)
-    return
 
     if not args.early_knowledge: # pre-training is needed
         pretrain_inst = ruleMiningClass(data_path=args.data_path,
@@ -1266,6 +1278,9 @@ def main(parser):
         train(pretrain_inst, num_epochs=4, bs=75, mini_batch_size=args.mbs, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
         # train(pretrain_inst, num_epochs=1, bs=50, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
         #copy rating model to trainable model
+
+        #TODO: check if there is a problem in here?
+        #TODO: double pre training, do this twich and see if this achievs something
         class_inst.certainty = pretrain_inst.certainty
         class_inst.pred_pattern = pretrain_inst.pred_pattern
         class_inst.knn = pretrain_inst.knn
@@ -1304,9 +1319,9 @@ def main(parser):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=500, type=int, help='batch size')
-    parser.add_argument('--mbs', default=24, type=int, help='mini batch size')
-    parser.add_argument('--epochs', default=3, type=int, help='num epochs to train')
-    parser.add_argument('--lr_actor', default=3e-6, type=float, help='starting learning rate for actor')
+    parser.add_argument('--mbs', default=32, type=int, help='mini batch size')
+    parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
+    parser.add_argument('--lr_actor', default=3e-5, type=float, help='starting learning rate for actor')
     parser.add_argument('--lr_critic', default=5e-4, type=float, help='starting learning rate for critic')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')

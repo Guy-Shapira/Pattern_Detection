@@ -24,8 +24,8 @@ np.random.seed(0)
 np.seterr('raise')
 
 
-# SPLIT_1 = 0
-SPLIT_1 = 3500
+SPLIT_1 = 0
+# SPLIT_1 = 3500
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
