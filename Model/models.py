@@ -5,6 +5,7 @@ from copy import deepcopy
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 import numpy as np
+from math import log, sqrt
 import torch.nn.functional as F
 from Model.utils import (
     OverFlowError,
@@ -123,7 +124,7 @@ class Actor(ModelBase):
             event_after_softmax = m(event_before_softmax)
             return base_output, event_after_softmax
 
-    def forward_mini_actions(self, index, data, training_factor):
+    def forward_mini_actions(self, index, data, training_factor, action_counter, count_comparisons):
         def masked_softmax(vec, mask, dim=0, T=1):
             vec = vec / T
             masked_vec = vec.cpu() * mask.float()
@@ -142,12 +143,28 @@ class Actor(ModelBase):
         numpy_probs = probs.detach().cpu().numpy()
 
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
-        if np.random.rand() > 1 - training_factor:
-            highest_prob_action = np.random.randint(len(probs))
-        else:
-            highest_prob_action = np.random.choice(
-                self.num_actions, p=np.squeeze(numpy_probs)
-            )
+
+        numpy_probs = np.squeeze(numpy_probs).astype(float)
+        numpy_probs = np.array([prob + sqrt((2 * log(count_comparisons))/ (action_counter[i])) for i, prob in enumerate(numpy_probs)])
+
+        numpy_probs = numpy_probs / np.sum(numpy_probs)
+        # print(numpy_probs)
+
+        # input("Guy look here!")
+
+        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
+
+        highest_prob_action = np.random.multinomial(
+                n=1, pvals=numpy_probs, size=1
+        )
+        highest_prob_action = np.argmax(highest_prob_action)
+
+        # if np.random.rand() > 1 - training_factor:
+        #     highest_prob_action = np.random.randint(len(probs))
+        # else:
+        #     highest_prob_action = np.random.choice(
+        #         self.num_actions, p=np.squeeze(numpy_probs)
+        #     )
         log_prob = torch.log(probs.squeeze(0)[highest_prob_action]).cpu()
 
         return highest_prob_action, log_prob, entropy
@@ -204,5 +221,5 @@ class ActorCriticModel(nn.Module):
     def forward_critic(self, base_output):
         return self.critic.forward(base_output)
 
-    def forward_actor_mini_actions(self, index, data, training_factor):
-        return self.actor.forward_mini_actions(index, data, training_factor)
+    def forward_actor_mini_actions(self, index, data, training_factor, action_counter, count_comparisons):
+        return self.actor.forward_mini_actions(index, data, training_factor, action_counter, count_comparisons)
