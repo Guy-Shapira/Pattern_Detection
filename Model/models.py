@@ -145,14 +145,16 @@ class Actor(ModelBase):
         entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
 
         numpy_probs = np.squeeze(numpy_probs).astype(float)
-        numpy_probs = np.array([prob + sqrt((2 * log(count_comparisons))/ (action_counter[i])) for i, prob in enumerate(numpy_probs)])
+        if index > 1:
 
-        numpy_probs = numpy_probs / np.sum(numpy_probs)
-        # print(numpy_probs)
+            ucb_factor = np.array([sqrt((2 * log(count_comparisons))/ (action_counter[i])) for i, _ in enumerate(numpy_probs)])
 
-        # input("Guy look here!")
+            # ucb_factor = np.array([sqrt((2 * log(action_counter))/ (count_comparisons[i])) for i, _ in enumerate(numpy_probs)])
+            ucb_factor = ucb_factor / np.sum(ucb_factor)
+            # numpy_probs = np.array([prob + sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, prob in enumerate(numpy_probs)])
+            numpy_probs += ucb_factor
 
-        entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
+            numpy_probs = numpy_probs / np.sum(numpy_probs)
 
         highest_prob_action = np.random.multinomial(
                 n=1, pvals=numpy_probs, size=1

@@ -55,7 +55,6 @@ import pandas as pd
 from stream.FileStream import FileInputStream, FileOutputStream
 from sklearn.neighbors import KNeighborsClassifier as KNN
 import wandb
-from bayes_opt import BayesianOptimization
 import json
 from torch.optim.lr_scheduler import StepLR
 
@@ -69,9 +68,9 @@ class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
 
-torch.manual_seed(42)
-random.seed(42)
-np.random.seed(42)
+torch.manual_seed(0)
+random.seed(0)
+np.random.seed(0)
 
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
@@ -249,6 +248,7 @@ with torch.autograd.set_detect_anomaly(True):
 
             if self.run_mode == "no":
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
+                test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
                 if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
                     pass
@@ -256,8 +256,8 @@ with torch.autograd.set_detect_anomaly(True):
                     # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
                 else:
                     print("Loaded pattern rating model! \n")
-                    # test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
-                test_pred.num_examples_given = 3500
+                    test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                    test_pred.num_examples_given = 3500
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
             else: #self.run_mode == "full"
@@ -400,17 +400,34 @@ with torch.autograd.set_detect_anomaly(True):
 
             numpy_probs = np.squeeze(numpy_probs).astype(float)
             
-            numpy_probs = np.array([prob + sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, prob in enumerate(numpy_probs)])
+            z = np.copy(numpy_probs)
+            ucb_factor = np.array([sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, _ in enumerate(numpy_probs)])
+            if index > 1:
+                ucb_factor = ucb_factor / np.sum(ucb_factor)
+                # numpy_probs = np.array([prob + sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, prob in enumerate(numpy_probs)])
+                numpy_probs += ucb_factor
 
-            numpy_probs = numpy_probs / np.sum(numpy_probs)
+                numpy_probs = numpy_probs / np.sum(numpy_probs)
             
+            if index % 50 == 0:
+                print(self.event_counter)
+            #     print(d)
+            #     print(f"\n------------------\n")
+            #     print(z)
+            #     print(f"\n------------------\n")
+            #     print(numpy_probs)
+            #     print(f"\n------------------\n")
+            #     input("next!")
             try:
+                # action = np.argmax(numpy_probs)
+
 
                 action = np.random.multinomial(
                     n=1, pvals=numpy_probs, size=1
                 )
-                num_actions = len(numpy_probs)
+                # num_actions = len(numpy_probs)
                 action = np.argmax(action)
+
                 self.count_events += 1
                 self.event_counter[action] += 1
             except Exception as e:
@@ -430,9 +447,9 @@ with torch.autograd.set_detect_anomaly(True):
             log_prob = torch.log(probs.squeeze(0)[action])
             # print(log_prob)
             # input("Check!")
-            if index % 50 == 0:
-                print(probs)
-                print(log_prob)
+            # if index % 75 == 0:
+            #     print(probs)
+            #     print(log_prob)
 
             if abs(log_prob) < 0.1:
                 self.count += 1
@@ -448,9 +465,9 @@ with torch.autograd.set_detect_anomaly(True):
             self.count_comparisons += 1
             self.action_counter[highest_prob_action] += 1
 
-            if self.count_comparisons % 50 == 0:
-                print(self.count_comparisons)
-                print(self.action_counter)
+            # if self.count_comparisons % 50 == 0:
+            #     # print(self.count_comparisons)
+            #     print(self.action_counter)
             mini_action, _, _ = get_action_type(
                 highest_prob_action, self.num_actions, self.actions, self.match_max_size
             )
@@ -711,6 +728,7 @@ with torch.autograd.set_detect_anomaly(True):
                     total_count += 1
                     in_round_count += 1
                     step_list = None
+                    # step_list = [10000]
                     if pretrain_flag:
                         step_list = [10, 25, 40, 60]                        
                     else:
@@ -724,7 +742,7 @@ with torch.autograd.set_detect_anomaly(True):
                             model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=3, max_total_count=50, n=175, retrain=True)
 
                         else:
-                            model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=5e-5)
+                            model.pred_optim = torch.optim.Adam(params=model.pred_pattern.parameters(), lr=7e-5)
                             n = 75
                             if model.run_mode == "semi":
                                 n = 50
@@ -732,7 +750,7 @@ with torch.autograd.set_detect_anomaly(True):
                             #     n = 50
 
                             #TODO: check why this is almost meaningless and doesn't impact training
-                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=40, n=n, retrain=True)
+                            model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=n, retrain=True)
 
                     data = model.data[index]
                     data_size = len(data)
@@ -867,7 +885,7 @@ with torch.autograd.set_detect_anomaly(True):
                     # after loop ended- calc reward for all patterns and update policy
                     try:
                         run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
-
+                        # raise ValueError('A very specific bad thing happened.')
                     except Exception as e:
                         # raise(e)
                         # timeout error
