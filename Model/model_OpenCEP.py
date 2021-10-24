@@ -639,7 +639,8 @@ with torch.autograd.set_detect_anomaly(True):
         # run_name = "second_level_setup_all_lr" + str(model.lr)
         # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
         actor_loss, critic_loss =  None, None
-        new_run_name = f"mini-batches "
+        # new_run_name = f"mini-batches "
+        new_run_name = wandb_name
         run_type = (run_name == 'gain_knowledge_model')
         pred_flag = (model.run_mode != "full")
         if run_name is None:
@@ -678,13 +679,10 @@ with torch.autograd.set_detect_anomaly(True):
             [],
         )
         max_rating = []
-        # entropy_term, turn_flag = 0, 0
         entropy_term =  0
 
         #TODO: change this to be diffent in gain_knowledge and train_model
         training_factor = 0.8
-        # training_factor = 0.0
-        # switch_flag = int(split_factor * bs)
         pbar_file = sys.stdout
         total_count = 0
         count_actor = 0
@@ -705,8 +703,6 @@ with torch.autograd.set_detect_anomaly(True):
                 num_epochs_trained = 0
             else:
                 num_epochs_trained += 1
-            # print(f"Not finished = {not_finished_count}\n {not_finished_strs}")
-            # not_finished_strs = []
             currentPath = pathlib.Path(os.path.dirname(__file__))
             absolutePath = str(currentPath.parent)
             sys.path.append(absolutePath)
@@ -717,12 +713,6 @@ with torch.autograd.set_detect_anomaly(True):
                 data_len = len(os.listdir(path))
                 for index in range(epoch + 2, min(data_len - 2, len(model.data)), data_len // bs):
                     set_data = None
-                    # if total_count >= bs:
-                    #     total_count = 0
-                    #     turn_flag = 1 - turn_flag
-
-                    # if total_count >= switch_flag:
-                    #     turn_flag = 1 - turn_flag
                     if in_round_count >= bs:
                         break
                     total_count += 1
@@ -885,12 +875,10 @@ with torch.autograd.set_detect_anomaly(True):
                     # after loop ended- calc reward for all patterns and update policy
                     try:
                         run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
-                        # raise ValueError('A very specific bad thing happened.')
                     except Exception as e:
                         # raise(e)
                         # timeout error
                         finished_flag = False
-                        # not_finished_strs.append(str_pattern)
                         not_finished_count += 1
 
                     content = None
@@ -985,23 +973,16 @@ with torch.autograd.set_detect_anomaly(True):
                         continue 
 
 
-                # recent_ratings, recent_rewards, recent_logs = [], [], []
-                # recent_values_ratings, recent_values_rewards = [], []
-                # recent_Qval_ratings, recent_Qval_rewards = [], []
                     else:
                         recent_ratings.append(ratings)
                         recent_rewards.append(real_rewards)
                         recent_logs.append(log_probs)
-                        # print(log_probs)
-                        # input("i dont get it")
                         recent_values_ratings.append(values_rating)
                         recent_values_rewards.append(values_reward)
                         recent_Qval_ratings.append(Qval_rating)
                         recent_Qval_rewards.append(Qval_reward)
 
                         if len(recent_ratings) == mini_batch_size:
-                            # print(recent_logs)
-                            # input("what de fuck")
                             actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
                                                     recent_Qval_ratings, recent_Qval_rewards,
                                                     entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
@@ -1010,7 +991,6 @@ with torch.autograd.set_detect_anomaly(True):
                             recent_ratings, recent_rewards, recent_logs = [], [], []
                             recent_values_ratings, recent_values_rewards = [], []
                             recent_Qval_ratings, recent_Qval_rewards = [], []
-                            # wandb.log({"actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss})
 
                         all_ratings.append(np.sum(ratings))
                         all_rewards.append(rewards[index_max])
@@ -1235,6 +1215,7 @@ with torch.autograd.set_detect_anomaly(True):
         return sum_out_of_sample / len(df), (1 - (diff / len(df)))
 
 
+
     def main(parser):
         args = parser.parse_args()
         max_vals = [int(i) for i in args.max_vals.split(",")]
@@ -1296,7 +1277,6 @@ with torch.autograd.set_detect_anomaly(True):
             print("Finished creating Knowledge model")
 
             train(pretrain_inst, num_epochs=4, bs=75, mini_batch_size=args.mbs, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
-            # train(pretrain_inst, num_epochs=1, bs=50, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True)
             #copy rating model to trainable model
 
             #TODO: check if there is a problem in here?
@@ -1307,7 +1287,6 @@ with torch.autograd.set_detect_anomaly(True):
             class_inst.list_of_dfs = pretrain_inst.list_of_dfs
         # train working model
         result, patterns = train(class_inst, num_epochs=args.epochs, bs=args.bs, mini_batch_size=args.mbs, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False, wandb_name=args.wandb_name)
-        # result, patterns = train(class_inst, num_epochs=1, bs=50, split_factor=args.split_factor, rating_flag=rating_flag, run_name="train_model", pretrain_flag=False)
 
         all_patterns.append(patterns)
         cuda_handle.empty_cache()
