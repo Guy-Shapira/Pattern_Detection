@@ -24,8 +24,8 @@ np.random.seed(0)
 np.seterr('raise')
 
 
-SPLIT_1 = 0
-# SPLIT_1 = 3500
+# SPLIT_1 = 0
+SPLIT_1 = 3500
 SPLIT_2 = 40000
 SPLIT_3 = 41000
 
@@ -47,17 +47,20 @@ class ratingPredictor(nn.Module):
         self,
         rating_df,
         ratings_col,
+        noise_flag=False,
+        mu=0,
+        sigma=1
     ):
         super().__init__()
         ratings_col = ratings_col.apply(lambda x: min(x, 49))
         self.rating_df_train = rating_df[:SPLIT_1]
         self.ratings_col_train = ratings_col[:SPLIT_1]
-        ax = self.ratings_col_train.plot.hist(bins=25, alpha=0.5)
-        plt.show()
-        plt.savefig(f"look.pdf")
-        # input()
+        self.noise_flag = noise_flag
 
         self.rating_df_train = df_to_tensor(self.rating_df_train)
+        
+        if self.noise_flag:
+            self.ratings_col_train = self.ratings_col_train.apply(lambda x: max(min(x + np.normal(mu,sigma), 49), 0))
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
 
         self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
@@ -123,7 +126,7 @@ class ratingPredictor(nn.Module):
             keep_indexes = list(set(list(range(len(containter)))) - set(indexes))
 
             if isinstance(containter, list):
-                containter = np.array(containter)
+                containter = np.array(containter, dtype=object)
                 containter = list(containter[keep_indexes])
             else:
                 containter = containter[keep_indexes]
@@ -546,23 +549,23 @@ class ratingPredictor(nn.Module):
 
 
 
-def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch=0, pred_flag=False, flat_flag=False):
+def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch=0, pred_flag=False, flat_flag=False, noise_flag=False):
     if rating_flag:
         if pred_flag:
-            model_rating, norm_rating,  = model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag)
+            model_rating, norm_rating,  = model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag, noise_flag)
             if len(events) == 1:
                 return model_rating - 0.5, norm_rating
             else:
                 # return (model_rating + 0.1 * len(events)) * (1.05 ** (epoch + 1)), norm_rating
                 return (model_rating + 0.3 * len(events)), norm_rating
         else:
-            return knn_based_rating(model, events, str_pattern, actions, flat_flag)
+            return knn_based_rating(model, events, str_pattern, actions, flat_flag, noise_flag)
     else:
         # return 1, 1 # GPU first test
         return other_rating(model, events, all_conds, actions, str_pattern)
 
 
-def knn_based_rating(model, events, str_pattern, actions, flat_flag=False):
+def knn_based_rating(model, events, str_pattern, actions, flat_flag=False, noise_flag=False):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     
     predict_pattern = None
@@ -603,6 +606,11 @@ def knn_based_rating(model, events, str_pattern, actions, flat_flag=False):
     num_exp = sum(["explosion" in event for event in events]) >= 1
     rating += 0.8 * num_exp
 
+    if noise_flag:
+        noise = np.random.normal(model.mu, model.sigma)
+        # rating += noise
+        rating = max(rating + noise, 0)
+
     return rating, (rating + 1.5) - model.knn_avg
 
 
@@ -640,7 +648,7 @@ def other_rating(model, events, all_conds, actions, str_pattern):
     # rating -= 2
     return rating, rating
 
-def model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag=False):
+def model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag=False, noise_flag=False):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     rating = 0
     predict_pattern = None
@@ -665,7 +673,8 @@ def model_based_rating(model, events, all_conds, str_pattern, actions, flat_flag
 
             start_time = timeit.default_timer()
             # print(str_pattern)
-            knn_rating, _ = knn_based_rating(model, events, str_pattern, actions, flat_flag)
+            knn_rating, _ = knn_based_rating(model, events, str_pattern, actions, flat_flag, noise_flag)
+
             knn_time = timeit.default_timer() - start_time
             start_time = timeit.default_timer()
             rating = float(model.pred_pattern.get_prediction(df_to_tensor(predict_pattern), str_pattern, events, knn_rating=knn_rating))
