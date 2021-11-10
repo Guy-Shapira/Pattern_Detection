@@ -56,11 +56,13 @@ class ratingPredictor(nn.Module):
         self.rating_df_train = rating_df[:SPLIT_1]
         self.ratings_col_train = ratings_col[:SPLIT_1]
         self.noise_flag = noise_flag
-
+        self.mu = mu
+        self.sigma = sigma
         self.rating_df_train = df_to_tensor(self.rating_df_train)
         
         if self.noise_flag:
-            self.ratings_col_train = self.ratings_col_train.apply(lambda x: max(min(x + np.normal(mu,sigma), 49), 0))
+            self.ratings_col_train = self.ratings_col_train.apply(lambda x: max(min(x + np.random.normal(self.mu, self.sigma), 49), 0))
+
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
 
         self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
@@ -315,7 +317,7 @@ class ratingPredictor(nn.Module):
         acc = correct / count_all
         if total_count % 25 == 0:
             acc = 1 - (sum(mistake_histogram) / sum(lens_array))
-            # print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
+            print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
             # mistake_acc = [round(i / j, 2) for i,j in zip(mistake_histogram, lens_array)]
 
         if not self.rating_df_unlabeld is None:
@@ -408,15 +410,16 @@ class ratingPredictor(nn.Module):
 
 
         if count < max_count:
-            self.label_manually(n=n, weights=weights)
-            self.num_examples_given += n
-            # if (not retrain) and count % 2 == 0:
-            self._fix_data_balance()
-            # self.m_factor /= 1.05
-            self._update_weights()
+            if retrain:
+                self.label_manually(n=n, weights=weights)
+                self.num_examples_given += n
+                # if (not retrain) and count % 2 == 0:
+                self._fix_data_balance()
+                # self.m_factor /= 1.05
+                self._update_weights()
             print("Finished cycle")
 
-            return self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n)
+            return self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n, retrain=retrain)
         
         else:
             return acc

@@ -256,16 +256,15 @@ with torch.autograd.set_detect_anomaly(True):
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
                 test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
+                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
 
-
-                
-                if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-                    # pass
-                    test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                    # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-                else:
-                    print("Loaded pattern rating model! \n")
-                    test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+                #     # pass
+                #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+                #     # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                # else:
+                #     print("Loaded pattern rating model! \n")
+                #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
                 test_pred.num_examples_given = 3500
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
@@ -420,13 +419,6 @@ with torch.autograd.set_detect_anomaly(True):
 
             if index % 50 == 0:
                 print(self.event_counter)
-            #     print(d)
-            #     print(f"\n------------------\n")
-            #     print(z)
-            #     print(f"\n------------------\n")
-            #     print(numpy_probs)
-            #     print(f"\n------------------\n")
-            #     input("next!")
             try:
                 # action = np.argmax(numpy_probs)
 
@@ -843,17 +835,6 @@ with torch.autograd.set_detect_anomaly(True):
                             for j, action_val in enumerate(actions_vals):
                                 old_desicions = old_desicions.clone()
                                 old_desicions[count * (model.num_cols + 1) + j + 1] = model.embedding_actions(torch.tensor(action_val))
-
-                            # if in_round_count == 5:
-                            #     print("Log prob \n")
-                            #     print(log_prob)
-                            #     print("Log \n")
-                            #     print(log)
-                            #     print("Log probs \n")
-                            #     print(log_probs)
-                            #     print("Recent log probs \n")
-                            #     print(recent_logs)
-                            #     input("next!\n")
                             log_prob = (log_prob + log.item()) / 2
                             log_probs.append(log_prob)
                             actions.append(mini_actions)
@@ -1156,6 +1137,7 @@ with torch.autograd.set_detect_anomaly(True):
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
+                
                 if False:
                     after_epoch_test(best_pattern)
                     with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1164,8 +1146,11 @@ with torch.autograd.set_detect_anomaly(True):
 
 
             mean_result_out, out_sample_acc  = run_test(model, load_flag=False, avg_score=np.mean(real), rating_flag=rating_flag, pred_flag=pred_flag)
-            wandb.log({"out_sample_acc": out_sample_acc, "out_sample_mean_reward": mean_result_out})
-
+            wandb.log({"out_sample_acc": out_sample_acc, "out_sample_mean_reward": mean_result_out,
+                    "test_accuracy": model.certainty, "mean_result_over_best_patterns": np.mean(list(best_found.keys()))})
+            if not model.run_mode == "full":
+                wandb.log({"number_of_examples": model.pred_pattern.get_num_examples(),
+                "actuall_mean_result_over_best": np.mean(list(actuall_best_found.values()))})
         cuda_handle.empty_cache()
         best_res = - 10
         for dict_res in factor_results:
@@ -1361,8 +1346,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CEP pattern miner')
     parser.add_argument('--bs', default=500, type=int, help='batch size')
     parser.add_argument('--mbs', default=24, type=int, help='mini batch size')
-    parser.add_argument('--epochs', default=5, type=int, help='num epochs to train')
-    parser.add_argument('--lr_actor', default=3e-5, type=float, help='starting learning rate for actor')
+    parser.add_argument('--epochs', default=10, type=int, help='num epochs to train')
+    parser.add_argument('--lr_actor', default=3e-5, type=float, help='starting leartning rate for actor')
     parser.add_argument('--lr_critic', default=5e-4, type=float, help='starting learning rate for critic')
     parser.add_argument('--hidden_size1', default=1024, type=int, help='hidden_size param for model')
     parser.add_argument('--hidden_size2', default=2048, type=int, help='hidden_size param for model')
