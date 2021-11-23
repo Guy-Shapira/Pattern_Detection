@@ -24,6 +24,7 @@ from Model.utils import (
     run_OpenCEP,
     check_predictor,
     calc_near_windows,
+    mapping_for_baseline,
 )
 
 from Model.rating_module import (
@@ -58,7 +59,7 @@ import wandb
 import json
 from torch.optim.lr_scheduler import StepLR
 
-from models import ActorCriticModel
+from models_baseline import ActorCriticModel
 
 GRAPH_VALUE = 50
 GAMMA = 0.99
@@ -68,9 +69,9 @@ class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
 
-torch.manual_seed(0)
-random.seed(0)
-np.random.seed(0)
+torch.manual_seed(50)
+random.seed(50)
+np.random.seed(50)
 
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
@@ -132,7 +133,14 @@ with torch.autograd.set_detect_anomaly(True):
             self.hidden_size1 = hidden_size1
             self.hidden_size2 = hidden_size2
             self.num_cols = len(eff_cols)
-            self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
+            # self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
+            self.num_actions = len(self.actions) * 2 * 2
+            # (num_events + 1) * (Sum_{i=0}^{i=num_cols} {(num_actions)^i})
+            self.num_actions_in_one_event = sum([self.num_actions ** i for i in range(0, self.num_cols + 1)])
+            # self.num_actions_in_use = (self.num_events) * self.num_actions_in_one_event + 1
+            self.num_actions_in_use = (self.num_events) * self.num_actions_in_one_event
+            print(self.num_actions_in_one_event, self.num_actions_in_use)
+
             self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
             self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
             self.actor_critic = ActorCriticModel(
@@ -142,7 +150,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 num_cols=self.num_cols,
                                 hidden_size1=self.hidden_size1,
                                 hidden_size2=self.hidden_size2,
-                                embeddding_total_size=EMBDEDDING_TOTAL_SIZE
+                                embeddding_total_size=EMBDEDDING_TOTAL_SIZE,
+                                num_actions=self.num_actions_in_use
                                 )
 
             # self._create_training_dir(data_path)
@@ -166,9 +175,8 @@ with torch.autograd.set_detect_anomaly(True):
             self.max_values_bayes = [i - j for i,j in zip(max_values, normailze_values)]
             self.count_events = 1
             self.count_comparisons = 1
-            self.event_counter = np.ones(self.num_events + 1)
-            self.action_counter = np.ones(self.num_actions + 1)
 
+            self.action_counter = np.ones(self.num_actions_in_use)
 
         def _create_df(self, pattern_path):
             def fix_str_list_columns_init(data, flag=False):
@@ -256,15 +264,15 @@ with torch.autograd.set_detect_anomaly(True):
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
                 test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
-                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
+                # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
 
-                # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
-                #     # pass
-                #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                #     # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
-                # else:
-                #     print("Loaded pattern rating model! \n")
-                #     test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
+                    # pass
+                    test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
+                    # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                else:
+                    print("Loaded pattern rating model! \n")
+                    # test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
                 test_pred.num_examples_given = 3500
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
@@ -394,173 +402,52 @@ with torch.autograd.set_detect_anomaly(True):
             else:
                 raise Exception("Data set not supported")
 
-        def forward(self, data, old_desicions, training_factor=0.0):
-            base_value, event_after_softmax = self.actor_critic.forward_actor(data, old_desicions, training_factor=training_factor)
+        def forward(self, data, training_factor=0.0):
+
+            base_value, event_after_softmax = self.actor_critic.forward_actor(data, training_factor=training_factor)
             value_reward, value_rating = self.actor_critic.forward_critic(base_value)
             return event_after_softmax, value_reward, value_rating
 
-        def get_event(self, data, old_desicions, index=0, training_factor=0.0):
+
+        def get_action(self, data, index=0, training_factor=0.0):
             global total_steps_trained
             total_steps_trained += 1
-            probs, value_reward, value_rating = self.forward(Variable(data), Variable(old_desicions), training_factor=training_factor)
+            probs, value_reward, value_rating = self.forward(Variable(data), training_factor=training_factor)
             numpy_probs = probs.detach().cpu().numpy()
+
             action = None
 
             numpy_probs = np.squeeze(numpy_probs).astype(float)
 
             z = np.copy(numpy_probs)
-            ucb_factor = np.array([sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, _ in enumerate(numpy_probs)])
+            ucb_factor = np.array([sqrt((2 * log(self.count_events))/ (self.action_counter[i])) for i, _ in enumerate(numpy_probs)])
             if index > 1:
                 ucb_factor = ucb_factor / np.sum(ucb_factor)
-                # numpy_probs = np.array([prob + sqrt((2 * log(self.count_events))/ (self.event_counter[i])) for i, prob in enumerate(numpy_probs)])
                 numpy_probs += ucb_factor
 
             numpy_probs = numpy_probs / np.sum(numpy_probs)
-
-            if index % 50 == 0:
-                print(self.event_counter)
             try:
-                # action = np.argmax(numpy_probs)
-
 
                 action = np.random.multinomial(
                     n=1, pvals=numpy_probs, size=1
                 )
-                # num_actions = len(numpy_probs)
                 action = np.argmax(action)
 
                 self.count_events += 1
-                self.event_counter[action] += 1
+                self.action_counter[action] += 1
             except Exception as e:
-                print(numpy_probs)
-                raise e
                 print(e)
-                print("----")
-                print(numpy_probs)
+                raise e
 
-                print("----")
-                print(probs)
-                exit(0)
             entropy = -np.sum(np.mean(numpy_probs) * np.log(numpy_probs + 1e-7)) / 2
-            # if np.random.rand() > 1 - training_factor:
-            #     action = np.random.randint(num_actions)
 
             log_prob = torch.log(probs.squeeze(0)[action])
-            # print(log_prob)
-            # input("Check!")
-            # if index % 75 == 0:
-            #     print(probs)
-            #     print(log_prob)
-
             if abs(log_prob) < 0.1:
                 self.count += 1
 
+            #TODO: return all mini-actions and split event from action
             return action, log_prob, value_reward, value_rating, entropy
-
-        def single_col_mini_action(self, data, index, training_factor=0.0):
-
-            highest_prob_value = None
-            highest_prob_action, log_prob, entropy = self.actor_critic.forward_actor_mini_actions(
-                index, data, training_factor, self.action_counter, self.count_comparisons
-            )
-            self.count_comparisons += 1
-            self.action_counter[highest_prob_action] += 1
-
-            # if self.count_comparisons % 50 == 0:
-            #     # print(self.count_comparisons)
-            #     print(self.action_counter)
-            mini_action, _, _ = get_action_type(
-                highest_prob_action, self.num_actions, self.actions, self.match_max_size
-            )
-
-            if len(mini_action.split("value")) > 1:
-                highest_prob_value = "value"
-
-            return highest_prob_action, highest_prob_value, log_prob, entropy
-
-        def get_cols_mini_actions(self, data, old_desicions, training_factor=0.0):
-            mini_actions = []
-            log_probs = 0.0
-            compl_vals = []
-            conds = []
-            mini_actions_vals = []
-            total_entropy = 0
-            comps_to = []
-
-            base_value, _ = self.actor_critic.forward_actor(data, old_desicions.cuda(), False, training_factor)
-            value_reward, value_rating = self.actor_critic.forward_critic(base_value)
-            for i in range(self.num_cols):
-                action, value, log, entropy = self.single_col_mini_action(base_value, i, training_factor) #this is weird, should update data after actions
-                mini_actions_vals.append(action)
-                total_entropy += entropy / self.num_cols
-                mini_action, cond, comp_to = get_action_type(action, self.num_actions, self.actions, self.match_max_size)
-                conds.append(cond)
-                comps_to.append(comp_to)
-                if len(mini_action.split("value")) > 1:
-                    mini_action = mini_action.replace("value", "")  # TODO:replace this shit
-                    compl_vals.append(value)  # TODO: change
-                else:
-                    compl_vals.append("nop")  # TODO: change
-                mini_actions.append(mini_action)
-                log_probs += log / self.num_cols
-            return mini_actions, log_probs, compl_vals, conds, mini_actions_vals, total_entropy, comps_to, value_reward, value_rating
-
-    def update_policy(policy_network, ratings, rewards, log_probs, values_rating, values_reward,
-                    Qval_rating, Qval_reward, entropy_term, epoch_idx, flag=False, certainty=1.0, run_type=False):
-
-        def l1_penalty(log_probs, l1_lambda=0.001):
-            """
-            Returns the L1 penalty of the params.
-            """
-            l1_norm = sum(log_prob.abs().sum() for log_prob in log_probs)
-            return l1_lambda*l1_norm / len(log_probs)
-
-        Qvals_reward = np.zeros_like(values_reward)
-        Qvals_rating = np.zeros_like(values_rating)
-        for t in reversed(range(len(rewards))):
-            Qval_0 = rewards[t] + GAMMA * Qval_reward
-            Qval_1 = ratings[t] * certainty + GAMMA * Qval_rating
-            Qvals_reward[t] = Qval_0
-            Qvals_rating[t] = Qval_1
-
-        if not run_type: #(Normal model)
-            values = torch.FloatTensor((values_reward, values_rating)).requires_grad_(True)
-            Qvals = torch.FloatTensor((Qvals_reward, Qvals_rating)).requires_grad_(True)
-        else: #(Gain knowledge model)
-            values = torch.FloatTensor(values_rating).requires_grad_(True)
-            Qvals = torch.FloatTensor(Qvals_rating).requires_grad_(True)
-
-        log_probs = torch.stack(log_probs).requires_grad_(True)
-        advantage = Qvals - values
-        advantage = advantage.to(log_probs.device)
-        log_probs_reg = l1_penalty(log_probs, l1_lambda=0.005)
-
-        actor_loss = (-log_probs * advantage).mean().requires_grad_(True)
-
-        actor_loss += log_probs_reg
-        critic_loss = 0.5 * advantage.pow(2).mean().requires_grad_(True)
-        policy_network.actor_optimizer.zero_grad()
-        policy_network.critic_optimizer.zero_grad()
-        actor_loss_1 = actor_loss.cpu().detach().numpy()
-        actor_loss = actor_loss.cuda()
-        critic_loss_1 = critic_loss.cpu().detach().numpy()
-        critic_loss = critic_loss.cuda()
-        # ac_loss = actor_loss + critic_loss + 0.001 * entropy_term
-
-        if False:
-            actor_loss.backward(retain_graph=True)
-            policy_network.actor_optimizer.step()
-            critic_loss.backward(retain_graph=True)
-            policy_network.critic_optimizer.step()
-        elif flag:
-            actor_loss.backward()
-            policy_network.actor_optimizer.step()
-        else:
-            critic_loss.backward()
-            policy_network.critic_optimizer.step()
-
-        return actor_loss_1, critic_loss_1
-
+    
 
 
     def update_policy_batch(policy_network, ratings, rewards, log_probs, values_rating, values_reward,
@@ -637,10 +524,7 @@ with torch.autograd.set_detect_anomaly(True):
 
 
     def train(model, num_epochs=5, test_epcohs=False, split_factor=0, bs=0, mini_batch_size=16, rating_flag=True, run_name=None, pretrain_flag=False, wandb_name=""):
-        # run_name = "second_level_setup_all_lr" + str(model.lr)
-        # run_name = f"StarPilot Exp! fixed window, window_size = {model.window_size} attention = 2.5"]
         actor_loss, critic_loss =  None, None
-        # new_run_name = f"mini-batches "
         new_run_name = wandb_name
         run_type = (run_name == 'gain_knowledge_model')
         pred_flag = (model.run_mode != "full")
@@ -649,8 +533,8 @@ with torch.autograd.set_detect_anomaly(True):
         else:
             run_name = new_run_name + "_" + run_name
         not_finished_count = 0
-        # run_name = "check both losses"
-        run = wandb.init(project='Pattern_Mining_long', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
+
+        run = wandb.init(project='Pattern_Mining_baseline', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
         config.hidden_size1 = model.hidden_size1
         config.hidden_size2 = model.hidden_size2
@@ -685,13 +569,11 @@ with torch.autograd.set_detect_anomaly(True):
         max_rating = []
         entropy_term =  0
 
-        #TODO: change this to be diffent in gain_knowledge and train_model
         training_factor = 0.8
         pbar_file = sys.stdout
         total_count = 0
         count_actor = 0
         count_critic = 0
-        # not_finished_strs = []
 
         recent_ratings, recent_rewards, recent_logs = [], [], []
         recent_values_ratings, recent_values_rewards = [], []
@@ -722,12 +604,10 @@ with torch.autograd.set_detect_anomaly(True):
                     total_count += 1
                     in_round_count += 1
                     step_list = None
-                    # step_list = [10000]
                     if pretrain_flag:
                         step_list = [10, 25, 40, 60]
                     else:
                         step_list = [25, 100, 250, 500]
-                    # Full knowledge run: comment next 10 rows!
                     if in_round_count in step_list and not model.run_mode == "full":
                         model.pred_pattern.save_all()
                         model.pred_pattern.train()
@@ -740,30 +620,10 @@ with torch.autograd.set_detect_anomaly(True):
                             n = 75
                             if model.run_mode == "semi":
                                 n = 50
-                            # else:
-                            #     n = 50
-
-                            #TODO: check why this is almost meaningless and doesn't impact training
                             model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=n, retrain=True)
-
-                            #TODO: must remove!!!!
-                            if epoch >= 3 and model.run_mode == "semi":
-                                if epoch == 3:
-                                    if in_round_count < 100:
-                                        model.certainty *= 1.02
-                                    elif in_round_count < 350:
-                                        model.certainty *= 1.04
-                                    else:
-                                        model.certainty *= 1.08
-                                else:
-                                    model.certainty *= 1.08
-
-
-
-
                     data = model.data[index]
+
                     data_size = len(data)
-                    old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
                     count = 0
                     best_reward = 0.0
                     pbar.update(n=1)
@@ -794,14 +654,10 @@ with torch.autograd.set_detect_anomaly(True):
                             data = set_data.clone().detach().requires_grad_(True)
                             set_data = None
                         data = data.cuda()
-                        # mask_orig = mask.clone()
-                        action, log_prob, value_reward, value_rating, entropy = model.get_event(
-                            data, old_desicions, in_round_count, training_factor=training_factor
+
+                        action, log_prob, value_reward, value_rating, entropy = model.get_action(
+                            data, in_round_count, training_factor=training_factor
                         )
-                        old_desicions = old_desicions.clone()
-                        old_desicions[count * (model.num_cols + 1)] = model.embedding_desicions(
-                            torch.tensor(action)
-                        ).cuda()
                         count += 1
                         value_rating = value_rating.detach().cpu().numpy()[0]
                         value_reward = value_reward.detach().cpu().numpy()[0]
@@ -809,41 +665,31 @@ with torch.autograd.set_detect_anomaly(True):
                         values_reward.append(value_reward)
                         entropy_term += entropy
 
-                        if action == model.num_events:
+                        if action == model.num_actions_in_use:
                             ratings.append(1)
-                            # print("this shit happend\n\n")
                             log_probs.append(log_prob)
-
                             if len(actions) == 0:
-                                # rewards.append(-1.5)
-                                # real_rewards.append(-1.5)
                                 special_reward.append(-1.5)
                                 break
                             else:
-                                # rewards.append(10)
-                                # real_rewards.append(10)
                                 special_reward.append(10)
                                 break
                         else:
                             special_reward.append(None)
-                            event = new_mapping(action, model.events)
+                            event, mini_actions, conds, comps_to, comp_vals = mapping_for_baseline(action, model.events, count, model.num_actions_in_one_event, model.num_cols ,model.actions)
+                            # print(event)
+                            # print(mini_actions)
+                            # print(conds)
+                            # print(comps_to)
                             events.append(event)
-                            mini_actions, log, comp_vals, conds, actions_vals, entropy, comps_to, value_reward, value_rating = \
-                                model.get_cols_mini_actions(data, old_desicions, training_factor=training_factor)
                             all_comps.append(comps_to)
                             entropy_term += entropy
-                            for j, action_val in enumerate(actions_vals):
-                                old_desicions = old_desicions.clone()
-                                old_desicions[count * (model.num_cols + 1) + j + 1] = model.embedding_actions(torch.tensor(action_val))
-                            log_prob = (log_prob + log.item()) / 2
                             log_probs.append(log_prob)
                             actions.append(mini_actions)
 
                             file = os.path.join(absolutePath, "Model", "training", model.exp_name, "{}.txt".format(index))
 
                             all_conds.append(conds)
-
-
                             if comp_vals.count("nop") != len(comp_vals):
                                 bayesian_dict = set_values_bayesian(comp_vals,
                                     model.all_cols, model.cols, mini_actions, event,
@@ -877,11 +723,7 @@ with torch.autograd.set_detect_anomaly(True):
                             patterns.append(pattern)
                             str_pattern = create_pattern_str(events, actions, comp_values, all_conds, model.cols, all_comps)
 
-                            #TODO: add conditions to allow no/semi/full knoweldge runs!
                             rating, norm_rating = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=pred_flag, noise_flag=model.noise_flag)
-
-                            #TODO: remove, added for sacle factor testing
-                            # rating /= 5
 
                             ratings.append(rating)
                             normalize_rating.append(norm_rating)
@@ -968,7 +810,7 @@ with torch.autograd.set_detect_anomaly(True):
 
 
 
-                    _, Qval_reward, Qval_rating = model.forward(data, torch.tensor([PAD_VALUE] * added_info_size), training_factor=training_factor)
+                    _, Qval_reward, Qval_rating = model.forward(data, training_factor=training_factor)
                     Qval_rating = Qval_rating.detach().cpu().numpy()[0]
                     Qval_reward = Qval_reward.detach().cpu().numpy()[0]
 
@@ -987,98 +829,98 @@ with torch.autograd.set_detect_anomaly(True):
 
 
                     index_max = np.argmax(rewards)
-                    if total_steps_trained > 4500 and real_rewards[index_max] <= 0:
-                        continue
+                    # if total_steps_trained > 4500 and real_rewards[index_max] <= 0:
+                    #     continue
 
 
-                    else:
-                        recent_ratings.append(ratings)
-                        recent_rewards.append(real_rewards)
-                        recent_logs.append(log_probs)
-                        recent_values_ratings.append(values_rating)
-                        recent_values_rewards.append(values_reward)
-                        recent_Qval_ratings.append(Qval_rating)
-                        recent_Qval_rewards.append(Qval_reward)
+                    # else:
+                    recent_ratings.append(ratings)
+                    recent_rewards.append(real_rewards)
+                    recent_logs.append(log_probs)
+                    recent_values_ratings.append(values_rating)
+                    recent_values_rewards.append(values_reward)
+                    recent_Qval_ratings.append(Qval_rating)
+                    recent_Qval_rewards.append(Qval_reward)
 
-                        if len(recent_ratings) == mini_batch_size:
-                            actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
-                                                    recent_Qval_ratings, recent_Qval_rewards,
-                                                    entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
-                                                    run_type=run_type)
-                            print(f"Updated! actor loss {actor_loss}")
-                            recent_ratings, recent_rewards, recent_logs = [], [], []
-                            recent_values_ratings, recent_values_rewards = [], []
-                            recent_Qval_ratings, recent_Qval_rewards = [], []
+                    if len(recent_ratings) == mini_batch_size:
+                        actor_loss , critic_loss  = update_policy_batch(model, recent_ratings, recent_rewards, recent_logs, recent_values_ratings, recent_values_rewards,
+                                                recent_Qval_ratings, recent_Qval_rewards,
+                                                entropy_term, epoch, flag=actor_flag, certainty=model.certainty,
+                                                run_type=run_type)
+                        print(f"Updated! actor loss {actor_loss}")
+                        recent_ratings, recent_rewards, recent_logs = [], [], []
+                        recent_values_ratings, recent_values_rewards = [], []
+                        recent_Qval_ratings, recent_Qval_rewards = [], []
 
-                        all_ratings.append(np.sum(ratings))
-                        all_rewards.append(rewards[index_max])
-                        numsteps.append(len(actions))
-                        avg_numsteps.append(np.mean(numsteps))
-                        mean_rewards.append(np.mean(all_rewards))
-                        max_rating.append(np.max(ratings))
-                        real.append(real_rewards[index_max])
-                        rating_plot.append(ratings[index_max])
-                        mean_real.append(np.mean(real_rewards))
+                    all_ratings.append(np.sum(ratings))
+                    all_rewards.append(rewards[index_max])
+                    numsteps.append(len(actions))
+                    avg_numsteps.append(np.mean(numsteps))
+                    mean_rewards.append(np.mean(all_rewards))
+                    max_rating.append(np.max(ratings))
+                    real.append(real_rewards[index_max])
+                    rating_plot.append(ratings[index_max])
+                    mean_real.append(np.mean(real_rewards))
 
-                        # if in_round_count % 2 == 0:
-                        if True:
-                            sys.stdout.write(
-                                "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
-                                    real_rewards[index_max],
-                                    ratings[index_max],
-                                    np.max(ratings),
-                                    sum([t != "nop" for sub in comp_values for t in sub]),
-                                )
+                    # if in_round_count % 2 == 0:
+                    if True:
+                        sys.stdout.write(
+                            "\nReal reward : {}, Rating {}, Max Rating : {},  comparisons : {}\n".format(
+                                real_rewards[index_max],
+                                ratings[index_max],
+                                np.max(ratings),
+                                sum([t != "nop" for sub in comp_values for t in sub]),
                             )
+                        )
 
-                            if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
-                                num_examples_given = model.pred_pattern.get_num_examples()
-                                if not actor_loss is None:
-                                    wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
-                                            "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                            "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
-                                            "curent_step": total_steps_trained,
-                                            "certainty": model.certainty,
-                                            "num_examples": num_examples_given,
-                                            "training_factor": training_factor})
-                                else:
-                                    wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
-                                            "max rating": np.max(ratings), "actor_flag": int(actor_flag),
-                                            "curent_step": total_steps_trained,
-                                            "certainty": model.certainty,
-                                            "num_examples": num_examples_given,
-                                            "training_factor": training_factor})
+                        if (real_rewards[index_max] > 2 or random.randint(0,3) > 1) or (ratings[index_max] > 2 or random.randint(0,3) > 1):
+                            num_examples_given = model.pred_pattern.get_num_examples()
+                            if not actor_loss is None:
+                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                        "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                        "actor_loss_reward": actor_loss, "critic_loss_reward": critic_loss,
+                                        "curent_step": total_steps_trained,
+                                        "certainty": model.certainty,
+                                        "num_examples": num_examples_given,
+                                        "training_factor": training_factor})
+                            else:
+                                wandb.log({"reward": real_rewards[index_max], "rating": ratings[index_max],
+                                        "max rating": np.max(ratings), "actor_flag": int(actor_flag),
+                                        "curent_step": total_steps_trained,
+                                        "certainty": model.certainty,
+                                        "num_examples": num_examples_given,
+                                        "training_factor": training_factor})
 
-                            # if total_steps_trained > 4500:
-                            #     # Only for sweeps!
-                            #     return None, None
+                        # if total_steps_trained > 4500:
+                        #     # Only for sweeps!
+                        #     return None, None
 
 
-                            str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
-                            comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
-                            sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
-                            sys.stdout.write(
-                                "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
-                                    in_round_count,
-                                    index,
-                                    np.round(rewards[index_max], decimals=3),
-                                    np.round(np.mean(all_rewards), decimals=3),
-                                    index_max + 1,
-                                )
+                        str_pattern = create_pattern_str(events[:index_max + 1], actions[:index_max + 1],
+                        comp_values[:index_max + 1], all_conds[:index_max + 1], model.cols, all_comps[:index_max + 1])
+                        sys.stdout.write(f"Pattern: events = {events[:index_max + 1]}, conditions = {str_pattern} index = {index}\n")
+                        sys.stdout.write(
+                            "episode: {}, index: {}, total reward: {}, average_reward: {}, length: {}\n".format(
+                                in_round_count,
+                                index,
+                                np.round(rewards[index_max], decimals=3),
+                                np.round(np.mean(all_rewards), decimals=3),
+                                index_max + 1,
                             )
-                            sys.stdout.write(f"\n--- Current count {model.count} ---\n")
+                        )
+                        sys.stdout.write(f"\n--- Current count {model.count} ---\n")
 
-                        config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
-                        #TODO: hyper-param, need to find proper value
-                        if model.count > 50:
-                            print("\n\n\n---- Stopping early because of low log ----\n\n\n")
-                            model.count = 0
-                            for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
-                                g1['lr'] *= 0.85
-                                g2['lr'] *= 0.85
-                            # continue
-                            training_factor = 0.6
-                            # break
+                    config.update({"total_number_of_steps" : total_steps_trained}, allow_val_change=True)
+                    #TODO: hyper-param, need to find proper value
+                    if model.count > 50:
+                        print("\n\n\n---- Stopping early because of low log ----\n\n\n")
+                        model.count = 0
+                        for g1, g2 in zip(model.actor_optimizer.param_groups, model.critic_optimizer.param_groups):
+                            g1['lr'] *= 0.85
+                            g2['lr'] *= 0.85
+                        # continue
+                        training_factor = 0.6
+                        # break
 
 
 
@@ -1137,7 +979,7 @@ with torch.autograd.set_detect_anomaly(True):
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-
+                
                 if False:
                     after_epoch_test(best_pattern)
                     with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1367,7 +1209,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
     parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
     parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
-    parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--eff_cols', default = 'x, y, vx', type=str, help="cols to use in model")
     parser.add_argument('--early_knowledge', dest='early_knowledge',
                 type=lambda x: bool(strtobool(x)),
                 default = True, help="indication if expert knowledge is available")
