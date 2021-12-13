@@ -290,7 +290,7 @@ def OpenCEP_pattern(exp_name, actions, action_types, index, comp_values, cols, c
     cols_rep = []
     [cols_rep.append(cols) for _ in range(len(actions))]
     bindings = [chr(ord("a") + i) for i in range(len(actions))]
-    action_types = np.array(action_types)
+    action_types = np.array(action_types, dtype=object)
     all_events = [PrimitiveEventStructure(event, chr(ord("a") + i)) for i, event in enumerate(actions)]
     pattern = Pattern(
         SeqOperator(*all_events),
@@ -391,6 +391,58 @@ def new_mapping(event, events, reverse=False):
         return events[event]
 
 
+def mapping_for_baseline(action, events, number_of_event, number_of_actions_in_event, num_cols, legal_actions):
+    """
+    :param action: model's tagged action
+    :param events: all events in the stream
+    :param number_of_event: placement of event is pattern
+    :param number_of_actions_in_event: number of total legal actions
+    :param num_cols: number of colmuns in the data
+    :param legal_actions: list of all one item possiable actions
+    :return: the actual event selected, and the condition on it (conditions, operators and comparison items)
+    """
+    all_actions = []
+    all_actions.extend(legal_actions)
+    all_actions.extend(["not" + i for i in legal_actions])
+    value_less_actions = copy.deepcopy(all_actions)
+    all_actions.extend(["v" + i for i in all_actions])
+    conditions_represention = action % number_of_actions_in_event
+    speration_points = [sum([len(all_actions) ** j for j in range(1, i + 1)]) for i in range(1, num_cols + 1)]
+    if conditions_represention > max(speration_points):
+        return "nop", [], [], [], []
+
+    event_selected = action // number_of_actions_in_event
+    
+    event_selected = events[event_selected]
+
+    conditions, comparisons, operators, comps_val = [], [], [], []
+    eff_sepration = [i for i in speration_points if i < conditions_represention]
+    eff_sepration.reverse()
+    #TODO: ADD Nope!!!
+    while len(eff_sepration) > 0:
+        # print(conditions_represention)
+        conditions.append(all_actions[conditions_represention % len(all_actions)])
+        operators.append("and")
+        if "v" in conditions[-1]:
+            comparisons.append("value")
+            comps_val.append("value")
+        else:
+            comparisons.append(number_of_event)
+            comps_val.append("")
+
+        
+        if conditions_represention <= 0:
+            break
+        conditions_represention = (conditions_represention - eff_sepration.pop()) // len(all_actions)
+        # conditions_represention = conditions_represention // len(all_actions)
+        
+    conditions.reverse()
+    operators.reverse()
+    comparisons.reverse()
+
+    return event_selected, conditions, operators, comparisons, comps_val
+
+
 def get_action_type(mini_action, total_actions, actions, match_max_size):
     """
     refactoring of kind_of_action function.
@@ -428,7 +480,6 @@ def get_action_type(mini_action, total_actions, actions, match_max_size):
     elif comp_to == match_max_size:
         comp_to = "value"
         action = "v" + action + "value"
-
 
     return action, cond, comp_to
 
