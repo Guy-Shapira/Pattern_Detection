@@ -33,10 +33,6 @@ from adaptive.optimizer.OptimizerFactory import OptimizerParameters
 from adaptive.optimizer.OptimizerTypes import OptimizerTypes
 from plan.multi.MultiPatternTreePlanMergeApproaches import MultiPatternTreePlanMergeApproaches
 
-
-CSV_PATH = "Patterns/pattern27_temp.csv"
-CSV_PATH_FINAL = "Patterns/pattern27_pre_final.csv"
-
 # #
 # from base.Formula import (
 #     GreaterThanFormula,
@@ -614,7 +610,7 @@ def simplify_pattern(str_pattern):
 
 
 
-def store_patterns_and_rating_to_csv(pattern, user_rating, events, actions, conds, str_pattern):
+def store_patterns_and_rating_to_csv(pattern, user_rating, events, actions, conds, str_pattern, CSV_PATH):
     pattern_copy = pattern.detach().numpy()
     pattern_copy = [str(i) for i in pattern_copy]
     pattern_copy = ','.join(pattern_copy)
@@ -629,11 +625,29 @@ def store_patterns_and_rating_to_csv(pattern, user_rating, events, actions, cond
         writer.writerow([pattern_copy, user_rating, events, actions, conds, str_pattern])
 
 
-def normalizeData():
+def normalizeData(CSV_PATH, CSV_PATH_FINAL, factor):
     df = pd.read_csv(CSV_PATH)
     min_val = df['rating'].min()
     max_val = df['rating'].max()
     mean_val = df['rating'].mean()
     df['rating'] = [10 * (i-min_val)/(max_val - min_val) for i in df['rating']]
-    # df['rating'] =  [max(0, i - mean_val) for i in df['rating']]
-    df.to_csv(CSV_PATH_FINAL)
+    # df.to_csv(CSV_PATH_FINAL)
+
+    counts = np.zeros(10 * factor)
+    out_file = open(CSV_PATH_FINAL, "w")
+    spamwriter = csv.writer(out_file)
+    spamwriter.writerow(df.columns)
+    for i, row in df.iterrows():
+        rating = int(float(row['rating']) * factor) + 1
+        if rating > 10 * factor:
+            rating = 10 * factor
+        second_max = np.sort(counts)[len(counts) // 2]
+        # if counts[rating - 1] <= second_max + 1000:
+        if True:
+            counts[rating - 1] += 1
+            row['rating'] = str(rating)
+            spamwriter.writerow(row)
+
+        if counts.sum() % 100 == 0:
+            print(counts)
+            input("check sanity")

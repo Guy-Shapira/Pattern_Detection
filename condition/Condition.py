@@ -177,7 +177,8 @@ class SimpleCondition(AtomicCondition):
     def __repr__(self):
         term_list = []
         for term in self.terms:
-            term_list.append(term.__repr__())
+            # term_list.append(term.__repr__())
+            term_list.append(str(term.__repr__()))
         separator = ', '
         return "[" + separator.join(term_list) + "]"
 

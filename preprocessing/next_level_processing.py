@@ -1,8 +1,10 @@
 import random
 import re
 import numpy as np
-INPUT_FILE = "store_folder/finalMatches.txt"
-OUTPUT_FILE = "Football/secondLevel"
+import os
+
+INPUT_FILE = "Football/secondLevel27AprilMatches.txt"
+OUTPUT_FILE = "Football/secondLevel27April"
 
 
 def main():
@@ -53,4 +55,6 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
+    os.system(f"sort -k 2 -t , {OUTPUT_FILE} > {OUTPUT_FILE}Sorted" )

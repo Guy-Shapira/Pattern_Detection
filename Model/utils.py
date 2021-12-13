@@ -16,8 +16,8 @@ from plan.TreeCostModels import TreeCostModels
 from plan.TreePlanBuilderTypes import TreePlanBuilderTypes
 
 
-# from plugin.Football.Football_processed import DataFormatter
-from plugin.StarPilot.StarPilot_processed import DataFormatter
+from plugin.Football.Football_processed import DataFormatter
+# from plugin.StarPilot.StarPilot_processed import DataFormatter
 # from plugin.GPU.GPU_processed import DataFormatter
 from tree.PatternMatchStorage import TreeStorageParameters
 
@@ -337,7 +337,8 @@ def run_OpenCEP(
         events = FileInputStream(
             os.path.join(absolutePath, events)
         )
-        base_matches_directory = os.path.join(absolutePath, "StarPilot")
+        # base_matches_directory = os.path.join(absolutePath, "StarPilot")
+        base_matches_directory = os.path.join(absolutePath, "Football")
     output_file_name = "%sMatches.txt" % test_name
     matches_stream = FileOutputStream(base_matches_directory, output_file_name)
     running_time = cep.run(events, matches_stream, DEFAULT_TESTING_DATA_FORMATTER)
@@ -639,8 +640,8 @@ def set_values_bayesian(comp_vals, cols, eff_cols, mini_actions, event, conds, f
     :param min_values: list of minimum leagl values to chose values from
     :return: list of ranges for eache bayesian serach
     """
-    # headers = ["event", "ts"] + cols # Football
-    headers = ["ts", "event"] + cols # StarPilot
+    headers = ["event", "ts"] + cols # Football
+    # headers = ["ts", "event"] + cols # StarPilot
     return_dict = {}
     df = pd.read_csv(file, names=headers)
     keep_cols = ["event"] + eff_cols

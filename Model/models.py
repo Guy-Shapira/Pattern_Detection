@@ -108,7 +108,7 @@ class Actor(ModelBase):
                 # max_index = torch.argmax(masked_exps).item()
                 # base_array[max_index] = 1.0
                 # return base_array
-                
+
             return (masked_exps/masked_sums)
 
 

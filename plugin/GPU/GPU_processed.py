@@ -22,7 +22,7 @@ COLUMN_KEYS = ['Timestamp', 'FB Memory Usage Used GPU_0', 'Power Samples Max GPU
 
 TICKER_KEY = "Server"
 EVENT_TIMESTAMP_KEY = "Timestamp"
-
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 class ByTickerEventTypeClassifier(EventTypeClassifier):
     """
@@ -53,4 +53,5 @@ class DataFormatter(DataFormatter):
 
     def get_event_timestamp(self, event_payload: dict):
         time = event_payload[EVENT_TIMESTAMP_KEY]
+        time = datetime.strptime(time, TIME_FORMAT)
         return time

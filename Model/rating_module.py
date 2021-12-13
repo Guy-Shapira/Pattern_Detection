@@ -13,7 +13,8 @@ import os
 import timeit
 
 
-PATTERN_LEN = 40
+# PATTERN_LEN = 40
+PATTERN_LEN = 48
 MAX_RATING = 50
 
 torch.manual_seed(42)
@@ -25,15 +26,15 @@ np.seterr('raise')
 
 
 # SPLIT_1 = 0
-SPLIT_1 = 3500
-SPLIT_2 = 40000
-SPLIT_3 = 41000
+# SPLIT_1 = 3500
+# SPLIT_2 = 40000
+# SPLIT_3 = 41000
 
 
 
-# SPLIT_1 = 3900
-# SPLIT_2 = 4000
-# SPLIT_3 = 4100
+SPLIT_1 = 3900
+SPLIT_2 = 8000
+SPLIT_3 = 8200
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -59,12 +60,12 @@ class ratingPredictor(nn.Module):
         self.mu = mu
         self.sigma = sigma
         self.rating_df_train = df_to_tensor(self.rating_df_train)
-        
+
         if self.noise_flag:
             self.ratings_col_train = self.ratings_col_train.apply(lambda x: max(min(x + np.random.normal(self.mu, self.sigma), 49), 0))
 
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
-
+        print(len(rating_df))
         self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
         self.ratings_col_test = ratings_col[SPLIT_2:SPLIT_3]
         self.m_factor = 0.3
@@ -150,7 +151,7 @@ class ratingPredictor(nn.Module):
             for data, str_pattern, events, knn_rating in zip(values, np.array(self.unlabeld_strs)[sampled_indexes], np.array(self.unlabeld_events)[sampled_indexes], knn_ratings):
                 _, res = torch.max(self.predict(data.unsqueeze(0)), dim=1)
                 # res = res.item() + 1
-                res = res.item() 
+                res = res.item()
                 # print(f"current prediction: {res}")
                 # print(events)
                 # print(str_pattern)
@@ -200,7 +201,7 @@ class ratingPredictor(nn.Module):
                 # print(self.rating_df_unlabeld)
                 # print(data)
                 self.rating_df_unlabeld = torch.cat([self.rating_df_unlabeld, data]).clone().detach()
-            
+
             if not knn_rating is None:
                 self.df_knn_rating.append(knn_rating)
             try:
@@ -314,7 +315,10 @@ class ratingPredictor(nn.Module):
             distance += l1_loss(max_val.float(), target.float()).requires_grad_(True)
             count_all += len(input_x)
 
-        acc = correct / count_all
+        if count_all != 0:
+            acc = correct / count_all
+        else:
+            acc = 0
         if total_count % 25 == 0:
             acc = 1 - (sum(mistake_histogram) / sum(lens_array))
             print(f"Test Avg distance {distance / len(self.test_loader)} Test acc = {acc}")
@@ -420,10 +424,10 @@ class ratingPredictor(nn.Module):
             print("Finished cycle")
 
             return self._train(optimizer, sched, count=count+1, max_count=max_count, max_total_count=max_total_count, n=n, retrain=retrain)
-        
+
         else:
             return acc
-        
+
 
     def _update_weights(self):
         self.weights = self.weights.cuda()
@@ -570,7 +574,7 @@ def rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epo
 
 def knn_based_rating(model, events, str_pattern, actions, flat_flag=False, noise_flag=False):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
-    
+
     predict_pattern = None
     if flat_flag:
         enum_array = [events, actions]
@@ -631,7 +635,7 @@ def other_rating(model, events, all_conds, actions, str_pattern):
             rating += 0.5 * len(events)
         for k in range(len(unique)):
             rating += math.pow(0.7, k + 1) * app_count[k] * 1.5
-        
+
 
     else:
         unique, app_count = np.unique(events, return_counts=True)
@@ -641,7 +645,7 @@ def other_rating(model, events, all_conds, actions, str_pattern):
         #     rating += 0.5
         if len(str_pattern) < 2:
             rating /= 5
-        
+
     if len(events) == 1:
         rating *= 0.8
     # if len(events) > 2 and len(unique) == 1:

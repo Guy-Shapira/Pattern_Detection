@@ -52,6 +52,7 @@ class genDataClass(nn.Module):
         num_cols=5,
         exp_name="Football",
         events=None,
+        cols=None,
     ):
         super().__init__()
         # self.actions = [">", "<", "=", "+>", "->", "*="]
@@ -60,6 +61,8 @@ class genDataClass(nn.Module):
         self.all_actions = self.actions
         self.all_actions.extend(["not" + i for i in self.all_actions])
         self.all_actions.extend(["v" + i for i in self.all_actions])
+        # print(self.all_actions)
+        # exit()
         self.events = events
         self.num_events = num_events
         self.match_max_size = match_max_size
@@ -78,9 +81,11 @@ class genDataClass(nn.Module):
         self.num_actions = (len(self.actions) * (self.match_max_size + 1)) * 2 * 2 + 1  # [>|<|= * [match_max_size + 1(value)] * not / reg] * (and/or) |nop
         self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
         self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
-        self.cols  = ["x", "y", "vx", "vy"]
+        # self.cols  = ["x", "y", "vx", "vy"]
+        self.cols = cols
 
-def genData(model, num_epochs=1):
+
+def genData(model, num_epochs=1, CSV_PATH=""):
     flatten = lambda list_list: [item for sublist in list_list for item in sublist]
     torch.autograd.set_detect_anomaly(True)
     added_info_size = (model.match_max_size + 1) * (model.num_cols + 1)  # need to remove + 1
@@ -92,7 +97,8 @@ def genData(model, num_epochs=1):
     test1, test2 = [], []
     patterns_all = []
     if model.exp_name == "Football":
-        patterns_all = ["pass", "dribble", "two-run"] * 45 + ["random"] * 10
+        patterns_all = ["pass", "dribble"] * 45 + ["random"] * 35
+        # patterns_all = ["two-run"] * 85 + ["random"] * 15
     elif model.exp_name == "StarPilot":
         # patterns_all = ["finish", "random"]
         # patterns_all = ["finish", "shot_alot"] * 35 + ["random"] * 10
@@ -109,8 +115,8 @@ def genData(model, num_epochs=1):
     for epoch in range(num_epochs):
         pbar_file = sys.stdout
         # assumes shit Model/training has relavent data!
-        with tqdm.tqdm(total=len(os.listdir("Model/training")[:350]), file=pbar_file) as pbar:
-            for i, data in enumerate(model.data[epoch * 350 :(epoch + 1) * 350]):
+        with tqdm.tqdm(total=len(os.listdir("Model/training")), file=pbar_file) as pbar:
+            for i, data in enumerate(model.data):
                 data_size = len(data)
                 old_desicions = torch.tensor([0] * added_info_size)
                 data = torch.cat((data, old_desicions.float()), dim=0)
@@ -170,9 +176,9 @@ def genData(model, num_epochs=1):
 
                     for i in range(len(events)):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
-                        user_reward = np.random.uniform(3*(i+1), 6*(i+1))
+                        user_reward = np.random.uniform(2.5 * (i+1), 5 * (i+1))
                         if np.random.randint(4):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
 
@@ -215,9 +221,9 @@ def genData(model, num_epochs=1):
 
                     for i in range(len(events)):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
-                        user_reward = np.random.uniform(5*(i+1), 5*(i+1))
+                        user_reward = np.random.uniform(3.5 * (i+1), 5 * (i+1))
                         if np.random.randint(4):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
 
@@ -244,6 +250,7 @@ def genData(model, num_epochs=1):
 
                     # first player: second app
                     next_actions = random.choices(model.all_actions, k=len(model.cols))
+                    # print(model.cols)
                     next_actions[1] = ">"
                     next_actions[4] = "not<"
                     next_comps = random.choices(comp_targets, k=len(model.cols))
@@ -271,9 +278,9 @@ def genData(model, num_epochs=1):
 
                     for i in range(len(events)):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
-                        user_reward = np.random.uniform(5*(i+1), 7*(i+1))
+                        user_reward = np.random.uniform(4 * (i+1), 6.5 * (i+1))
                         if np.random.randint(4):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
 
@@ -356,12 +363,13 @@ def genData(model, num_epochs=1):
                         # if (np.random.randint(5) or (len(test1) > 500 and user_reward > 10)):
                         if np.random.randint(4) or (user_reward > np.mean(test1)):
                             if user_reward > 0:
+                                flag_add = True
                                 if user_reward < 5:
                                     flag_add = False
                                     if np.random.randint(max(1, int(user_reward - 1))):
                                         flag_add = True
                                 if flag_add:
-                                    store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern)
+                                    store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events, flatten(actions), flatten(all_conds), str_pattern, CSV_PATH)
                                     test1.append(user_reward)
                         if count >= model.match_max_size:
                             is_done = True
@@ -412,7 +420,7 @@ def genData(model, num_epochs=1):
                         if i == len(events) - 1:
                             user_reward *= 2
                         if np.random.randint(4) or (user_reward > np.mean(test2)):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
 
@@ -463,7 +471,7 @@ def genData(model, num_epochs=1):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
                         user_reward = np.random.uniform(2.5 * (i+1), 4.5 * (i+1))
                         if np.random.randint(4) or (user_reward > np.mean(test2)):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
                 elif pattern_type == "run-back":
@@ -489,12 +497,12 @@ def genData(model, num_epochs=1):
                         next_actions = random.choices(model.all_actions, k=len(model.cols))
                         next_conds = random.choices(["and", "or"], k=len(model.cols))
                         next_comp_vals = ["value" if "v" in act else random.choice(range(model.match_max_size)) for act in actions[-1]]
-                
+
                         comp_values.append(next_comp_vals)
                         actions.append(next_actions)
                         all_comps.append(next_targets)
                         all_conds.append(next_conds)
-                
+
                     # add finish to the pattern
                     events.append("finish")
                     next_actions = random.choices(model.all_actions, k=len(model.cols))
@@ -505,12 +513,12 @@ def genData(model, num_epochs=1):
                     comp_values.append(next_comp_vals)
                     next_targets = random.choices(comp_targets, k=len(model.cols))
                     all_comps.append(next_targets)
-                
+
                     for i in range(len(events)):
                         str_pattern = create_pattern_str(events[:i+1], actions[:i+1], comp_values[:i+1], all_conds[:i+1], model.cols, all_comps[:i+1])
                         user_reward = np.random.uniform(3*(i+1), 6*(i+1))
                         if np.random.randint(4):
-                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern)
+                            store_patterns_and_rating_to_csv(data[-added_info_size:], user_reward , events[:i+1], flatten(actions[:i+1]), flatten(all_conds[:i+1]), str_pattern, CSV_PATH)
                             test2.append(user_reward)
                     continue
     print(np.mean(test1))
@@ -521,6 +529,11 @@ def genData(model, num_epochs=1):
 
 def main(parser):
     args = parser.parse_args()
+    CSV_PATH = args.csv_path
+    # CSV_PATH = "Patterns/Football_pattern_temp.csv"
+    CSV_PATH_FINAL = CSV_PATH.split(".csv")[0]
+    CSV_PATH_FINAL += "_final.csv"
+    # CSV_PATH_FINAL = "Patterns/Football_test_patterns.csv"
     max_vals = [int(i) for i in args.max_vals.split(",")]
     norm_vals = [int(i) for i in args.norm_vals.split(",")]
     all_cols = args.all_cols.replace(" ", "").split(",")
@@ -531,27 +544,35 @@ def main(parser):
                 data_path=args.data_path,
                 num_events=num_events,
                 max_values=max_vals,
+                num_cols=9,
                 normailze_values=norm_vals,
                 exp_name=args.exp_name,
                 match_max_size=args.max_size,
                 window_size=args.window_size,
-                events=events
+                events=events,
+                cols=eff_cols
                 )
-    test = genData(class_inst)
-    normalizeData()
+    test = genData(class_inst, 8, CSV_PATH)
+    normalizeData(CSV_PATH, CSV_PATH_FINAL, args.norm_factor)
     print(np.mean(test))
 
 if __name__ == "__main__":
     torch.set_num_threads(30)
-    parser = argparse.ArgumentParser(description='CEP pattern miner')
+    parser = argparse.ArgumentParser(description='CEP pattern generator')
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--pattern_max_time', default=50, type=int, help='maximum time for pattern (seconds)')
-    parser.add_argument('--window_size', default=350, type=int, help='max size of input window')
+    parser.add_argument('--window_size', default=500, type=int, help='max size of input window')
     parser.add_argument('--data_path', default='Football/xaa', help='path to data log')
     parser.add_argument('--events_path', default='Football/events', help='path to list of events')
-    parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
-    parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
-    parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
-    parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
+    parser.add_argument('--max_vals', default = "97000, 100000, 25000, 20000, 20000, 20000", type=str, help="max values in columns")
+    parser.add_argument('--norm_vals', default = "24000, 45000, 6000, 9999, 9999, 9999", type=str, help="normalization values in columns")
+    # parser.add_argument('--max_vals', default = "50, 50, 50, 50, 5", type=str, help="max values in columns")
+    # parser.add_argument('--norm_vals', default = "0, 0, 0, 0, 0", type=str, help="normalization values in columns")
+    parser.add_argument('--all_cols', default = 'x, y, z, vx, vy, vz, ax, ay, az', type=str, help="all cols in data")
+    parser.add_argument('--eff_cols', default = 'x, y, z, vx, vy', type=str, help="cols to use in model")
+    # parser.add_argument('--all_cols', default = 'x, y, vx, vy, health', type=str, help="all cols in data")
+    # parser.add_argument('--eff_cols', default = 'x, y, vx, vy', type=str, help="cols to use in model")
     parser.add_argument('--exp_name', default = 'StarPilot', type=str)
+    parser.add_argument('--csv_path', default='Patterns/Football.csv', help='path; where to store the result file')
+    parser.add_argument('--norm_factor', default=5, type=int, help='range is from [0, 10 * norm_factor]')
     main(parser)
