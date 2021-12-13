@@ -68,10 +68,6 @@ class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
 
-torch.manual_seed(0)
-random.seed(0)
-np.random.seed(0)
-
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
         def __init__(
@@ -128,7 +124,12 @@ with torch.autograd.set_detect_anomaly(True):
                 else:
                     self.data = torch.load(f"Processed_Data/{exp_name}/{self.window_size}.pt").requires_grad_(True)
             global EMBDEDDING_TOTAL_SIZE
-            EMBDEDDING_TOTAL_SIZE = 8
+            if self.exp_name == "StarPilot":
+                EMBDEDDING_TOTAL_SIZE = 8
+            elif self.exp_name == "Football":
+                EMBDEDDING_TOTAL_SIZE = 21
+            else:
+                raise Exception("Data set not supported!")
             self.hidden_size1 = hidden_size1
             self.hidden_size2 = hidden_size2
             self.num_cols = len(eff_cols)
@@ -145,8 +146,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 embeddding_total_size=EMBDEDDING_TOTAL_SIZE
                                 )
 
-            # self._create_training_dir(data_path)
-            # print("finished training dir creation!")
+            self._create_training_dir(data_path)
+            print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -257,7 +258,6 @@ with torch.autograd.set_detect_anomaly(True):
                 test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
                 test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
-
                 # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
                 #     # pass
                 #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
@@ -365,6 +365,7 @@ with torch.autograd.set_detect_anomaly(True):
             return all_data
 
         def _create_training_dir(self, data_path):
+            # print(self.exp_name)
             if not os.path.exists(f"Model/training/{self.exp_name}"):
                 os.mkdir(f"Model/training/{self.exp_name}")
             lines = []
@@ -650,7 +651,11 @@ with torch.autograd.set_detect_anomaly(True):
             run_name = new_run_name + "_" + run_name
         not_finished_count = 0
         # run_name = "check both losses"
-        run = wandb.init(project='Pattern_Mining', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
+        if model.exp_name == "Football":
+            project = 'Pattern_Mining-Football'
+        else:
+            project='Pattern_Mining_long'
+        run = wandb.init(project=project, entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
         config.hidden_size1 = model.hidden_size1
         config.hidden_size2 = model.hidden_size2
@@ -746,17 +751,6 @@ with torch.autograd.set_detect_anomaly(True):
                             #TODO: check why this is almost meaningless and doesn't impact training
                             model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=n, retrain=True)
 
-                            #TODO: must remove!!!!
-                            if epoch >= 3 and model.run_mode == "semi":
-                                if epoch == 3:
-                                    if in_round_count < 100:
-                                        model.certainty *= 1.02
-                                    elif in_round_count < 350:
-                                        model.certainty *= 1.04
-                                    else:
-                                        model.certainty *= 1.08
-                                else:
-                                    model.certainty *= 1.08
 
 
 
@@ -892,7 +886,9 @@ with torch.autograd.set_detect_anomaly(True):
 
                     # after loop ended- calc reward for all patterns and update policy
                     try:
-                        run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
+                        run_exp_name = model.exp_name
+                        run_OpenCEP(exp_name=run_exp_name, test_name=index, patterns=patterns)
+                        # run_OpenCEP(exp_name="Football", test_name=index, patterns=patterns)
                     except Exception as e:
                         # raise(e)
                         # timeout error
@@ -1137,7 +1133,7 @@ with torch.autograd.set_detect_anomaly(True):
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-                
+
                 if False:
                     after_epoch_test(best_pattern)
                     with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1205,7 +1201,13 @@ with torch.autograd.set_detect_anomaly(True):
             # model.load(prefix_path + "/Model/" + name + ".pt")
             model.pred_pattern.load_state_dict(torch.load(prefix_path + "/Pattern/" + name + ".pt"))
         model.eval()
-        df = pd.read_csv("Patterns/test_StarPilot.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        if model.exp_name == "StarPilot":
+            df = pd.read_csv("Patterns/test_StarPilot.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        elif model.exp_name == "Football":
+            df = pd.read_csv("Patterns/test_Football.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        else:
+            raise Exception("Data set not supported!")
+
         df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 49))
         diff = 0.0
         sum_out_of_sample = 0.0
@@ -1239,6 +1241,10 @@ with torch.autograd.set_detect_anomaly(True):
 
     def main(parser):
         args = parser.parse_args()
+        torch.manual_seed(args.seed)
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
         max_vals = [int(i) for i in args.max_vals.split(",")]
         norm_vals = [int(i) for i in args.norm_vals.split(",")]
         all_cols = args.all_cols.replace(" ", "").split(",")
@@ -1302,7 +1308,7 @@ with torch.autograd.set_detect_anomaly(True):
                 sigma=args.sigma,
                 noise_flag=args.noise_flag)
             print("Finished creating Knowledge model")
-
+            args.wandb_name += f"_seed_{args.seed}"
             train(pretrain_inst, num_epochs=4, bs=75, mini_batch_size=args.mbs, split_factor=0.5, rating_flag=True, run_name="gain_knowledge_model", pretrain_flag=True, wandb_name=args.wandb_name)
             #copy rating model to trainable model
 
@@ -1377,7 +1383,7 @@ if __name__ == "__main__":
                 default = False, help="indication if expert values has noise in them")
     parser.add_argument('--sigma', default=1, type=float, help='sigma for gaussian distribution')
     parser.add_argument('--mu', default=0, type=float, help='mu for gaussian distribution')
-
+    parser.add_argument('--seed', default=0, type=int, help='seed for all random libraries')
     parser.add_argument('--wandb_name', default = 'full_knowledge', type=str)
     parser.add_argument('--exp_name', default = 'StarPilot', type=str)
     parser.add_argument('--run_mode', default="no", type=str, choices=['no', 'semi', 'full'], help="run mode, semi for cool name model, \n"\
