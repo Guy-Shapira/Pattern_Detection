@@ -19,7 +19,7 @@ class ByTickerEventTypeClassifier(EventTypeClassifier):
         """
         The type of a  event is equal to the ticker .
         """
-        return event_payload[TICKER_KEY]
+        return str(event_payload[TICKER_KEY])
 
 
 class DataFormatter(DataFormatter):

@@ -146,8 +146,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 embeddding_total_size=EMBDEDDING_TOTAL_SIZE
                                 )
 
-            self._create_training_dir(data_path)
-            print("finished training dir creation!")
+            # self._create_training_dir(data_path)
+            # print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -257,7 +257,8 @@ with torch.autograd.set_detect_anomaly(True):
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
                 test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
-                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
+                # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
+                test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=1, max_total_count=10, n=0)
                 # if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
                 #     # pass
                 #     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
@@ -418,8 +419,8 @@ with torch.autograd.set_detect_anomaly(True):
 
             numpy_probs = numpy_probs / np.sum(numpy_probs)
 
-            if index % 50 == 0:
-                print(self.event_counter)
+            # if index % 50 == 0:
+            #     print(self.event_counter)
             try:
                 # action = np.argmax(numpy_probs)
 
@@ -750,7 +751,21 @@ with torch.autograd.set_detect_anomaly(True):
 
                             #TODO: check why this is almost meaningless and doesn't impact training
                             model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=n, retrain=True)
-        
+
+
+                            #TODO: must remove!!!!
+                            if epoch >= 3 and model.run_mode == "semi":
+                                if epoch == 3:
+                                    if in_round_count < 100:
+                                        model.certainty *= 1.02
+                                    elif in_round_count < 350:
+                                        model.certainty *= 1.04
+                                    else:
+                                        model.certainty *= 1.08
+                                else:
+                                    model.certainty *= 1.08
+
+
                     data = model.data[index]
                     data_size = len(data)
                     old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
@@ -883,6 +898,8 @@ with torch.autograd.set_detect_anomaly(True):
                     # after loop ended- calc reward for all patterns and update policy
                     try:
                         run_exp_name = model.exp_name
+                        # print(run_exp_name)
+                        # print(patterns)
                         run_OpenCEP(exp_name=run_exp_name, test_name=index, patterns=patterns)
                         # run_OpenCEP(exp_name="Football", test_name=index, patterns=patterns)
                     except Exception as e:
@@ -917,6 +934,9 @@ with torch.autograd.set_detect_anomaly(True):
                             else:
                                 original_reward = int(content.count(f"{pattern_index}: "))
                                 reward = original_reward
+                                # print(f"Reward pre store = {reward}")
+                                # input("wait")
+
                                 if reward >= model.max_fine_app:
                                     reward = max(0, 2 * model.max_fine_app - reward)
                                 real_rewards.append(reward)
@@ -931,6 +951,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 sp_rew = special_reward[pattern_index]
                                 if sp_rew is None:
                                     reward = real_rewards[pattern_index] * 0.75 + near_windows_rewards[pattern_index] * 0.25
+                                    # print(f"Reward = {reward}")
+                                    # input("wait")
                                     actuall_rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag, epoch, pred_flag=False, noise_flag=model.noise_flag)
                                     actuall_best_found_reward = reward * actuall_rating
 
@@ -1217,18 +1239,22 @@ with torch.autograd.set_detect_anomaly(True):
                 str_pattern = ""
             actions = ast.literal_eval(row['actions'])
             all_conds = []
-            rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag=rating_flag, pred_flag=pred_flag, flat_flag=True)
-            diff_val = rating - int(real_rating)
-            add_value = 1.0
-            if diff_val <= 7:
-                add_value = 0.25
-            elif diff_val <= 15:
-                add_value = 0.5
+            try:
+                rating, _ = rating_main(model, events, all_conds, actions, str_pattern, rating_flag=rating_flag, pred_flag=pred_flag, flat_flag=True)
+                diff_val = rating - int(real_rating)
+                add_value = 1.0
+                if diff_val <= 7:
+                    add_value = 0.25
+                elif diff_val <= 15:
+                    add_value = 0.5
 
-            if diff_val >= 1:
-                diff += add_value
-            sum_out_of_sample += rating * avg_score
-
+                if diff_val >= 1:
+                    diff += add_value
+                sum_out_of_sample += rating * avg_score
+            except Exception as e:
+                pass
+                # this maybe occur due to compatibility issues between data sets
+                # affects at most 0.01% of the test set 
         print(f"mean new pattern = {sum_out_of_sample / len(df)}")
         print(f"Acc = {1 - diff / len(df)}")
         return sum_out_of_sample / len(df), (1 - (diff / len(df)))

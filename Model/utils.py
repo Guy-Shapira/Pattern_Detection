@@ -412,7 +412,7 @@ def mapping_for_baseline(action, events, number_of_event, number_of_actions_in_e
         return "nop", [], [], [], []
 
     event_selected = action // number_of_actions_in_event
-    
+
     event_selected = events[event_selected]
 
     conditions, comparisons, operators, comps_val = [], [], [], []
@@ -430,12 +430,12 @@ def mapping_for_baseline(action, events, number_of_event, number_of_actions_in_e
             comparisons.append(number_of_event)
             comps_val.append("")
 
-        
+
         if conditions_represention <= 0:
             break
         conditions_represention = (conditions_represention - eff_sepration.pop()) // len(all_actions)
         # conditions_represention = conditions_represention // len(all_actions)
-        
+
     conditions.reverse()
     operators.reverse()
     comparisons.reverse()
