@@ -69,9 +69,10 @@ class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
 
-torch.manual_seed(50)
-random.seed(50)
-np.random.seed(50)
+# torch.manual_seed(50)
+# random.seed(50)
+# np.random.seed(50)
+torch.cuda.set_device(7)
 
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
@@ -154,8 +155,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 num_actions=self.num_actions_in_use
                                 )
 
-            # self._create_training_dir(data_path)
-            # print("finished training dir creation!")
+            self._create_training_dir(data_path)
+            print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -447,7 +448,7 @@ with torch.autograd.set_detect_anomaly(True):
 
             #TODO: return all mini-actions and split event from action
             return action, log_prob, value_reward, value_rating, entropy
-    
+
 
 
     def update_policy_batch(policy_network, ratings, rewards, log_probs, values_rating, values_reward,
@@ -734,7 +735,8 @@ with torch.autograd.set_detect_anomaly(True):
 
                     # after loop ended- calc reward for all patterns and update policy
                     try:
-                        run_OpenCEP(exp_name="StarPilot", test_name=index, patterns=patterns)
+                        run_exp_name = model.exp_name
+                        run_OpenCEP(exp_name=run_exp_name, test_name=index, patterns=patterns)
                     except Exception as e:
                         # raise(e)
                         # timeout error
@@ -979,7 +981,7 @@ with torch.autograd.set_detect_anomaly(True):
                     plt.show()
 
                 factor_results.append({"rating" : rating_groups[-1], "reward": real_groups[-1]})
-                
+
                 if False:
                     after_epoch_test(best_pattern)
                     with open("Data/Matches/allMatches.txt", "r") as f:
@@ -1047,7 +1049,13 @@ with torch.autograd.set_detect_anomaly(True):
             # model.load(prefix_path + "/Model/" + name + ".pt")
             model.pred_pattern.load_state_dict(torch.load(prefix_path + "/Pattern/" + name + ".pt"))
         model.eval()
-        df = pd.read_csv("Patterns/test_StarPilot.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        if model.exp_name == "StarPilot":
+            df = pd.read_csv("Patterns/test_StarPilot.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        elif model.exp_name == "Football":
+            df = pd.read_csv("Patterns/test_Football.csv")[["rating", "events", "conds", "actions", "pattern_str"]]
+        else:
+            raise Exception("Data set not supported!")
+
         df.rating = df.rating.apply(lambda x : min(round(float(x) - 1), 49))
         diff = 0.0
         sum_out_of_sample = 0.0
@@ -1081,6 +1089,10 @@ with torch.autograd.set_detect_anomaly(True):
 
     def main(parser):
         args = parser.parse_args()
+        torch.manual_seed(args.seed)
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
         max_vals = [int(i) for i in args.max_vals.split(",")]
         norm_vals = [int(i) for i in args.norm_vals.split(",")]
         all_cols = args.all_cols.replace(" ", "").split(",")
@@ -1219,7 +1231,7 @@ if __name__ == "__main__":
                 default = False, help="indication if expert values has noise in them")
     parser.add_argument('--sigma', default=1, type=float, help='sigma for gaussian distribution')
     parser.add_argument('--mu', default=0, type=float, help='mu for gaussian distribution')
-
+    parser.add_argument('--seed', default=0, type=int, help='seed for all random libraries')
     parser.add_argument('--wandb_name', default = 'full_knowledge', type=str)
     parser.add_argument('--exp_name', default = 'StarPilot', type=str)
     parser.add_argument('--run_mode', default="no", type=str, choices=['no', 'semi', 'full'], help="run mode, semi for cool name model, \n"\
