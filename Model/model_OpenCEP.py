@@ -762,19 +762,6 @@ with torch.autograd.set_detect_anomaly(True):
                             model.certainty = model.pred_pattern._train(model.pred_optim, None, count=0, max_count=2, max_total_count=50, n=n, retrain=True)
 
 
-                            #TODO: must remove!!!!
-                            if epoch >= 3 and model.run_mode == "semi":
-                                if epoch == 3:
-                                    if in_round_count < 100:
-                                        model.certainty *= 1.02
-                                    elif in_round_count < 350:
-                                        model.certainty *= 1.04
-                                    else:
-                                        model.certainty *= 1.08
-                                else:
-                                    model.certainty *= 1.08
-
-
                     data = model.data[index]
                     data_size = len(data)
                     old_desicions = torch.tensor([PAD_VALUE] * added_info_size)
