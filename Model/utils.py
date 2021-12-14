@@ -66,6 +66,7 @@ DEFAULT_TESTING_DATA_FORMATTER = DataFormatter()
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
+torch.cuda.set_device(0)
 
 
 def get_next_formula(bindings, curr_len, action_type, value, attribute, comp_target):

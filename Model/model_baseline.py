@@ -72,7 +72,7 @@ total_steps_trained = 0
 # torch.manual_seed(50)
 # random.seed(50)
 # np.random.seed(50)
-torch.cuda.set_device(7)
+torch.cuda.set_device(0)
 
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
@@ -130,7 +130,12 @@ with torch.autograd.set_detect_anomaly(True):
                 else:
                     self.data = torch.load(f"Processed_Data/{exp_name}/{self.window_size}.pt").requires_grad_(True)
             global EMBDEDDING_TOTAL_SIZE
-            EMBDEDDING_TOTAL_SIZE = 8
+            if self.exp_name == "StarPilot":
+                EMBDEDDING_TOTAL_SIZE = 8
+            elif self.exp_name == "Football":
+                EMBDEDDING_TOTAL_SIZE = 21
+            else:
+                raise Exception("Data set not supported!")
             self.hidden_size1 = hidden_size1
             self.hidden_size2 = hidden_size2
             self.num_cols = len(eff_cols)
@@ -140,7 +145,9 @@ with torch.autograd.set_detect_anomaly(True):
             self.num_actions_in_one_event = sum([self.num_actions ** i for i in range(0, self.num_cols + 1)])
             # self.num_actions_in_use = (self.num_events) * self.num_actions_in_one_event + 1
             self.num_actions_in_use = (self.num_events) * self.num_actions_in_one_event
-            print(self.num_actions_in_one_event, self.num_actions_in_use)
+
+
+            # print(self.num_actions_in_one_event, self.num_actions_in_use)
 
             self.embedding_actions = nn.Embedding(self.num_actions + 1, 1)
             self.embedding_desicions = nn.Embedding(self.num_events + 1, 1)
@@ -155,8 +162,8 @@ with torch.autograd.set_detect_anomaly(True):
                                 num_actions=self.num_actions_in_use
                                 )
 
-            self._create_training_dir(data_path)
-            print("finished training dir creation!")
+            # self._create_training_dir(data_path)
+            # print("finished training dir creation!")
 
             params = list(self.actor_critic.actor.parameters()) + list(self.actor_critic.critic.parameters())
 
@@ -253,7 +260,13 @@ with torch.autograd.set_detect_anomaly(True):
             knn.fit(df_new, df["rating"])
             self.knn_avg = df.rating.mean()
 
-            test_pred = ratingPredictor(df_new, df["rating"], noise_flag=self.noise_flag, mu=self.mu, sigma=self.sigma)
+            if self.exp_name == "StarPilot":
+                pattern_len = 50
+            elif self.exp_name == "Football":
+                pattern_len = 48
+            else:
+                raise Exception("Data set not supported!")
+            test_pred = ratingPredictor(df_new, df["rating"], noise_flag=self.noise_flag, mu=self.mu, sigma=self.sigma, pattern_len=pattern_len)
             self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=3e-5)
             self.pred_sched = StepLR(self.pred_optim, step_size=2000, gamma=0.85)
             test_pred.df_knn_rating = []
@@ -266,14 +279,13 @@ with torch.autograd.set_detect_anomaly(True):
                 test_pred.num_examples_given = 0
             elif self.run_mode == "semi":
                 # test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=7, max_total_count=100, n=0)
-
                 if not os.path.exists(f"Processed_knn/{self.pattern_path}/rating_model.pt"):
                     # pass
                     test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=10, max_total_count=100, n=10)
-                    # torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                    torch.save(test_pred, f"Processed_knn/{self.pattern_path}/rating_model.pt")
                 else:
                     print("Loaded pattern rating model! \n")
-                    # test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
+                    test_pred = torch.load(f"Processed_knn/{self.pattern_path}/rating_model.pt")
                 test_pred.num_examples_given = 3500
                 self.certainty = test_pred._train(self.pred_optim, self.pred_sched, count=0, max_count=0, max_total_count=0, n=0)
 
@@ -535,7 +547,7 @@ with torch.autograd.set_detect_anomaly(True):
             run_name = new_run_name + "_" + run_name
         not_finished_count = 0
 
-        run = wandb.init(project='Pattern_Mining_baseline', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
+        run = wandb.init(project='Pattern_Mining-Football', entity='guyshapira', name=run_name, settings=wandb.Settings(start_method='fork'))
         config = wandb.config
         config.hidden_size1 = model.hidden_size1
         config.hidden_size2 = model.hidden_size2
@@ -1131,6 +1143,7 @@ with torch.autograd.set_detect_anomaly(True):
                                     noise_flag=args.noise_flag)
 
         print("Finished creating Training model")
+        args.wandb_name += f"_seed_{args.seed}"
 
         if not args.early_knowledge: # pre-training is needed
             pretrain_inst = ruleMiningClass(data_path=args.data_path,
@@ -1208,7 +1221,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_size', default=8, type=int, help='max size of pattern')
     parser.add_argument('--max_fine_app', default=80, type=int, help='max appearance of pattnern in a single window')
     parser.add_argument('--pattern_max_time', default=100, type=int, help='maximum time for pattern (seconds)')
-    parser.add_argument('--window_size', default=485, type=int, help='max size of input window')
+    parser.add_argument('--window_size', default=500, type=int, help='max size of input window')
     parser.add_argument('--num_events', default=41, type=int, help='number of unique events in data')
     parser.add_argument('--split_factor', default=0.2, type=float, help='split how much train to rating and how much for reward')
     parser.add_argument('--data_path', default='StarPilot/GamesExp/', help='path to data log')
@@ -1237,6 +1250,5 @@ if __name__ == "__main__":
     parser.add_argument('--run_mode', default="no", type=str, choices=['no', 'semi', 'full'], help="run mode, semi for cool name model, \n"\
                                                                                                 "full for supervised baseline, \n"\
                                                                                                 "no for unsuervised baseline \n")
-
-    torch.set_num_threads(80)
+    torch.set_num_threads(10)
     main(parser)

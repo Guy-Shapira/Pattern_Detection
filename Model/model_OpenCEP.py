@@ -67,6 +67,7 @@ PAD_VALUE = -5.5
 class_inst = None
 num_epochs_trained = None
 total_steps_trained = 0
+torch.cuda.set_device(0)
 
 with torch.autograd.set_detect_anomaly(True):
     class ruleMiningClass(nn.Module):
@@ -245,7 +246,15 @@ with torch.autograd.set_detect_anomaly(True):
             knn.fit(df_new, df["rating"])
             self.knn_avg = df.rating.mean()
 
-            test_pred = ratingPredictor(df_new, df["rating"], noise_flag=self.noise_flag, mu=self.mu, sigma=self.sigma)
+            
+            if self.exp_name == "StarPilot":
+                pattern_len = 50
+            elif self.exp_name == "Football":
+                pattern_len = 48
+            else:
+                raise Exception("Data set not supported!")
+
+            test_pred = ratingPredictor(df_new, df["rating"], noise_flag=self.noise_flag, mu=self.mu, sigma=self.sigma, pattern_len=pattern_len)
             self.pred_optim = torch.optim.Adam(params=test_pred.parameters(), lr=3e-5)
             self.pred_sched = StepLR(self.pred_optim, step_size=2000, gamma=0.85)
             test_pred.df_knn_rating = []
@@ -1254,7 +1263,7 @@ with torch.autograd.set_detect_anomaly(True):
             except Exception as e:
                 pass
                 # this maybe occur due to compatibility issues between data sets
-                # affects at most 0.01% of the test set 
+                # affects at most 0.01% of the test set
         print(f"mean new pattern = {sum_out_of_sample / len(df)}")
         print(f"Acc = {1 - diff / len(df)}")
         return sum_out_of_sample / len(df), (1 - (diff / len(df)))

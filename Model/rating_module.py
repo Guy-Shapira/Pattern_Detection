@@ -14,27 +14,28 @@ import timeit
 
 
 # PATTERN_LEN = 40
-PATTERN_LEN = 48
+# PATTERN_LEN = 48
 MAX_RATING = 50
 
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(0)
+torch.cuda.set_device(0)
 
 
 np.seterr('raise')
 
 
 # SPLIT_1 = 0
-# SPLIT_1 = 3500
-# SPLIT_2 = 40000
-# SPLIT_3 = 41000
+SPLIT_1 = 3500
+SPLIT_2 = 40000
+SPLIT_3 = 41000
 
 
 
-SPLIT_1 = 3900
-SPLIT_2 = 8000
-SPLIT_3 = 8200
+# SPLIT_1 = 3900
+# SPLIT_2 = 8000
+# SPLIT_3 = 8200
 
 def df_to_tensor(df, float_flag=False):
     if not float_flag:
@@ -48,9 +49,10 @@ class ratingPredictor(nn.Module):
         self,
         rating_df,
         ratings_col,
+        pattern_len,
         noise_flag=False,
         mu=0,
-        sigma=1
+        sigma=1,
     ):
         super().__init__()
         ratings_col = ratings_col.apply(lambda x: min(x, 49))
@@ -59,13 +61,14 @@ class ratingPredictor(nn.Module):
         self.noise_flag = noise_flag
         self.mu = mu
         self.sigma = sigma
+        self.pattern_len = pattern_len
         self.rating_df_train = df_to_tensor(self.rating_df_train)
 
         if self.noise_flag:
             self.ratings_col_train = self.ratings_col_train.apply(lambda x: max(min(x + np.random.normal(self.mu, self.sigma), 49), 0))
 
         self.ratings_col_train = df_to_tensor(self.ratings_col_train, True)
-        print(len(rating_df))
+        # print(len(rating_df))
         self.rating_df_test = rating_df[SPLIT_2:SPLIT_3]
         self.ratings_col_test = ratings_col[SPLIT_2:SPLIT_3]
         self.m_factor = 0.3
@@ -86,7 +89,7 @@ class ratingPredictor(nn.Module):
         self.hidden_size1 = 35
         self.hidden_size2 = 25
         self.hidden_size3 = 15
-        self.linear_layer = nn.Linear(PATTERN_LEN, self.hidden_size1).cuda()
+        self.linear_layer = nn.Linear(self.pattern_len, self.hidden_size1).cuda()
         self.linear_layer2 = nn.Linear(self.hidden_size1, self.hidden_size2).cuda()
         self.linear_layer3 = nn.Linear(self.hidden_size2, self.hidden_size3).cuda()
         self.linear_layer4 = nn.Linear(self.hidden_size3, MAX_RATING).cuda()
@@ -435,7 +438,7 @@ class ratingPredictor(nn.Module):
 
     def _create_data_aug(self, data_inst):
         copy_data = data_inst.clone()
-        indexes = random.choices(range(0, len(copy_data)), k=random.randint(0, int(PATTERN_LEN / 3)))
+        indexes = random.choices(range(0, len(copy_data)), k=random.randint(0, int(self.pattern_len / 3)))
         for idx in indexes:
             copy_data[idx] = random.choice(copy_data)
         return copy_data

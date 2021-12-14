@@ -16,6 +16,7 @@ from Model.utils import (
 torch.manual_seed(42)
 random.seed(42)
 np.random.seed(42)
+torch.cuda.set_device(0)
 
 
 class ModelBase(nn.Module):
